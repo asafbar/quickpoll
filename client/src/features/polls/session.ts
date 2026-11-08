@@ -5,7 +5,7 @@ interface OrganizerSession {
   organizerToken: string;
 }
 
-function sessionKey(role: "organizer" | "participant", pollId: string) {
+function sessionKey(role: "organizer" | "participant" | "vote", pollId: string) {
   return "quickpoll:" + role + ":" + pollId;
 }
 
@@ -43,4 +43,16 @@ export function getParticipantSession(pollId: string): ParticipantCredentials | 
 
 export function saveParticipantSession(pollId: string, session: ParticipantCredentials) {
   sessionStorage.setItem(sessionKey("participant", pollId), JSON.stringify(session));
+}
+
+export function hasConfirmedVote(pollId: string, participantId: string) {
+  return readSession(sessionKey("vote", pollId)) === participantId;
+}
+
+export function rememberConfirmedVote(pollId: string, participantId: string) {
+  try {
+    sessionStorage.setItem(sessionKey("vote", pollId), JSON.stringify(participantId));
+  } catch {
+    // The server still prevents a repeat vote if this tab cannot save the receipt.
+  }
 }

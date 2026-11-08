@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import type { LiveStatus } from "../features/polls/usePollLive";
 import type { PollOption, PollStatus } from "../services/api";
 
 const statusStyle: Record<PollStatus, string> = {
@@ -11,6 +12,21 @@ export function StatusBadge({ status }: { status: PollStatus }) {
   return <span className={"inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold capitalize " + statusStyle[status]}>
     <span className="size-1.5 rounded-full bg-current" aria-hidden="true" />{status}
   </span>;
+}
+
+const connectionDot: Record<LiveStatus, string> = {
+  Live: "bg-success",
+  Reconnecting: "bg-warning",
+  Offline: "bg-muted",
+};
+
+export function ConnectionStatus({ status }: { status: LiveStatus }) {
+  return (
+    <span role="status" className="inline-flex shrink-0 items-center gap-1.5 text-xs font-semibold text-muted">
+      <span aria-hidden="true" className={"size-1.5 rounded-full " + connectionDot[status]} />
+      <span className="sr-only">Live connection: </span>{status}
+    </span>
+  );
 }
 
 export function Notice({ children, error = false, warning = false }: { children: ReactNode; error?: boolean; warning?: boolean }) {

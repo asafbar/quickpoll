@@ -1,27 +1,35 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "../../components/Icon";
-import { Notice, OptionList, PageIntro, StatusBadge } from "../../components/PollUi";
+import { ConnectionStatus, Notice, OptionList, PageIntro, StatusBadge } from "../../components/PollUi";
 import { changePollStatus, getPollResults } from "../../services/api";
 import type { PollResults, PollStatus, PublicPoll } from "../../services/api";
 import { getOrganizerSession } from "./session";
 import { usePublicPoll } from "./usePublicPoll";
+import { usePollLive } from "./usePollLive";
 
-function Results({ joinCode }: { joinCode: string }) {
+function Results({ joinCode, status, refreshPoll, liveVersion }: {
+  joinCode: string;
+  status: PollStatus;
+  refreshPoll: () => void;
+  liveVersion: number;
+}) {
   const [version, setVersion] = useState(0);
-  const [state, setState] = useState<{ version: number; results?: PollResults; error?: string }>({ version: -1 });
-  const isLoading = state.version !== version;
+  const requestVersion = version + liveVersion;
+  const [state, setState] = useState<{ version: number; status?: PollStatus; results?: PollResults; error?: string }>({ version: -1 });
+  const isLoading = state.version !== requestVersion || state.status !== status;
 
   useEffect(() => {
     const controller = new AbortController();
     getPollResults(joinCode, controller.signal).then((results) => {
-      if (!controller.signal.aborted) setState({ version, results });
+      if (!controller.signal.aborted) setState({ version: requestVersion, status, results });
     }).catch((error: unknown) => {
       if (!controller.signal.aborted) {
-        setState({ version, error: error instanceof Error ? error.message : "Could not load results." });
+        const message = error instanceof Error ? error.message : "Could not load results.";
+        setState((current) => ({ ...current, version: requestVersion, status, error: message }));
       }
     });
     return () => controller.abort();
-  }, [joinCode, version]);
+  }, [joinCode, status, requestVersion]);
 
   return (
     <section className="panel p-4 sm:p-6" aria-labelledby="results-heading">
@@ -30,7 +38,10 @@ function Results({ joinCode }: { joinCode: string }) {
           <h2 id="results-heading" className="text-lg font-extrabold">Results</h2>
           {state.results && <p className="text-sm text-muted">{state.results.totalVotes} {state.results.totalVotes === 1 ? "vote" : "votes"} total</p>}
         </div>
-        <button type="button" className="btn btn-secondary" disabled={isLoading} onClick={() => setVersion((value) => value + 1)}>
+        <button type="button" className="btn btn-secondary" disabled={isLoading} onClick={() => {
+          refreshPoll();
+          setVersion((value) => value + 1);
+        }}>
           <Icon name="refresh" className="size-4" /> {isLoading ? "Refreshing…" : "Refresh results"}
         </button>
       </div>
@@ -42,10 +53,13 @@ function Results({ joinCode }: { joinCode: string }) {
             <li key={option.id}>
               <div className="mb-1.5 flex items-start justify-between gap-3 text-sm">
                 <span className="min-w-0 font-bold wrap-anywhere">{option.text}</span>
-                <span className="shrink-0 tabular-nums text-muted">{option.voteCount} · {option.percentage}%</span>
+                <span className="shrink-0 tabular-nums text-muted">
+                  {option.voteCount} {option.voteCount === 1 ? "vote" : "votes"} · {option.percentage}%
+                </span>
               </div>
               <div aria-hidden="true" className="h-2 overflow-hidden rounded-full bg-line">
-                <div className="h-full rounded-full bg-linear-to-r from-accent to-accent-bright" style={{ width: option.percentage + "%" }} />
+                <div className="h-full origin-left rounded-full bg-linear-to-r from-accent to-accent-bright motion-safe:transition-transform motion-safe:duration-500 motion-safe:ease-out"
+                  style={{ transform: "scaleX(" + option.percentage / 100 + ")" }} />
               </div>
             </li>
           ))}
@@ -76,8 +90,15 @@ function CloseConfirmation({ onCancel, onConfirm }: { onCancel: () => void; onCo
   );
 }
 
-function Dashboard({ poll, joinCode, organizerToken }: { poll: PublicPoll; joinCode: string; organizerToken: string }) {
-  const [status, setStatus] = useState<PollStatus>(poll.status);
+function Dashboard({ poll, joinCode, organizerToken, refreshPoll, applyStatus }: {
+  poll: PublicPoll;
+  joinCode: string;
+  organizerToken: string;
+  refreshPoll: () => void;
+  applyStatus: (status: PollStatus) => void;
+}) {
+  const { status } = poll;
+  const { connection, resultsVersion } = usePollLive(joinCode, poll.id, refreshPoll, true);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [confirmClose, setConfirmClose] = useState(false);
@@ -91,9 +112,10 @@ function Dashboard({ poll, joinCode, organizerToken }: { poll: PublicPoll; joinC
     setError("");
     try {
       const updated = await changePollStatus(poll.id, action, organizerToken);
-      setStatus(updated.status);
+      applyStatus(updated.status);
     } catch (error) {
       setError(error instanceof Error ? error.message : "Could not update the poll.");
+      refreshPoll();
     } finally {
       setPending(false);
     }
@@ -112,9 +134,12 @@ function Dashboard({ poll, joinCode, organizerToken }: { poll: PublicPoll; joinC
     <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_19rem]">
       <div className="grid min-w-0 gap-5">
         <section className="panel p-4 sm:p-6" aria-labelledby="poll-question">
-          <div className="mb-3 flex items-center justify-between gap-3">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <p className="eyebrow">Your poll</p>
-            <span aria-live="polite"><StatusBadge status={status} /></span>
+            <div className="flex flex-wrap items-center gap-3">
+              <ConnectionStatus status={connection} />
+              <span aria-live="polite"><StatusBadge status={status} /></span>
+            </div>
           </div>
           <h2 id="poll-question" className="mb-4 text-xl font-extrabold wrap-anywhere sm:text-2xl">{poll.question}</h2>
           <OptionList options={poll.options} />
@@ -136,7 +161,7 @@ function Dashboard({ poll, joinCode, organizerToken }: { poll: PublicPoll; joinC
         {status === "draft" ? (
           <Notice>Results appear here after you activate your poll.</Notice>
         ) : (
-          <Results key={status} joinCode={joinCode} />
+          <Results joinCode={joinCode} status={status} refreshPoll={refreshPoll} liveVersion={resultsVersion} />
         )}
       </div>
       <div className="grid min-w-0 gap-4">
@@ -162,14 +187,14 @@ function Dashboard({ poll, joinCode, organizerToken }: { poll: PublicPoll; joinC
           <p className="mt-1">You can refresh this tab. Closing it or clearing browser storage can lose organizer access to this poll.</p>
         </aside>
       </div>
-      {confirmClose && <CloseConfirmation onCancel={() => setConfirmClose(false)} onConfirm={() => void transition("close")} />}
+      {confirmClose && status === "active" && <CloseConfirmation onCancel={() => setConfirmClose(false)} onConfirm={() => void transition("close")} />}
     </div>
   );
 }
 
 export function Organizer({ pollId }: { pollId: string }) {
   const [session] = useState(() => getOrganizerSession(pollId));
-  const { poll, error } = usePublicPoll(session?.joinCode ?? "");
+  const { poll, error, refresh, applyStatus } = usePublicPoll(session?.joinCode ?? "");
 
   return (
     <section className="shell py-9 sm:py-14">
@@ -182,13 +207,17 @@ export function Organizer({ pollId }: { pollId: string }) {
           <p className="mt-2 text-sm leading-relaxed text-muted">This tab has no organizer credentials for this poll. Return to the original tab if it’s still open.</p>
           <a href="/create" className="btn btn-primary mt-4">Create another poll</a>
         </div>
-      ) : error || (poll && poll.id !== pollId) ? (
+      ) : (!poll && error) || (poll && poll.id !== pollId) ? (
         <div className="grid max-w-xl justify-items-start gap-3">
           <Notice error>{error ?? "The saved organizer access does not match this poll."}</Notice>
           <button type="button" className="btn btn-secondary" onClick={() => window.location.reload()}>Retry</button>
         </div>
       ) : poll ? (
-        <Dashboard poll={poll} joinCode={session.joinCode} organizerToken={session.organizerToken} />
+        <>
+          {error && <div className="mb-4"><Notice error>{error}</Notice></div>}
+          <Dashboard poll={poll} joinCode={session.joinCode} organizerToken={session.organizerToken}
+            refreshPoll={refresh} applyStatus={applyStatus} />
+        </>
       ) : (
         <Notice>Loading your poll…</Notice>
       )}
