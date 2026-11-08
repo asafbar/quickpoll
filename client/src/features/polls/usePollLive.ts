@@ -32,8 +32,11 @@ export function usePollLive(joinCode: string, pollId: string | undefined, refres
     const socket: Socket<ServerEvents, ClientEvents> = io(apiOrigin, { autoConnect: false });
     let generation = 0;
     let retry: number | undefined;
+    let resultsTimer: number | undefined;
 
     function refreshResults() {
+      window.clearTimeout(resultsTimer);
+      resultsTimer = undefined;
       if (watchResults) setResultsVersion((version) => version + 1);
     }
 
@@ -82,7 +85,10 @@ export function usePollLive(joinCode: string, pollId: string | undefined, refres
     }
 
     function onResults(event: PollEvent) {
-      if (event.pollId === pollId) refreshResults();
+      if (event.pollId === pollId && resultsTimer === undefined) {
+        // A burst of votes only needs one fresh snapshot.
+        resultsTimer = window.setTimeout(refreshResults, 150);
+      }
     }
 
     socket.on("connect", onConnect);
@@ -97,6 +103,7 @@ export function usePollLive(joinCode: string, pollId: string | undefined, refres
     return () => {
       generation++;
       window.clearTimeout(retry);
+      window.clearTimeout(resultsTimer);
       window.removeEventListener("offline", onOffline);
       window.removeEventListener("online", onOnline);
       socket.off("connect", onConnect);

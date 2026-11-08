@@ -5,6 +5,7 @@ import { Home } from "./features/Home";
 import { CreatePoll } from "./features/polls/CreatePoll";
 import { JoinPoll } from "./features/polls/JoinPoll";
 import { Organizer } from "./features/polls/Organizer";
+import { Presentation } from "./features/polls/Presentation";
 import { getServerHealth } from "./services/api";
 
 function Footer() {
@@ -40,6 +41,8 @@ function App() {
   const createActive = path === "/create" || !!organizerId;
   const joinActive = path === "/join";
   const navClass = "rounded-lg px-2.5 py-2 text-sm font-bold hover:bg-accent-soft motion-safe:transition-colors sm:px-3";
+
+  if (path === "/present") return <Presentation joinCode={joinCode} />;
 
   return (
     <div className="flex min-h-dvh flex-col">

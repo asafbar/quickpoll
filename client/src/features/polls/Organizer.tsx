@@ -1,73 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "../../components/Icon";
 import { ConnectionStatus, Notice, OptionList, PageIntro, StatusBadge } from "../../components/PollUi";
-import { changePollStatus, getPollResults } from "../../services/api";
-import type { PollResults, PollStatus, PublicPoll } from "../../services/api";
+import { changePollStatus } from "../../services/api";
+import type { PollStatus, PublicPoll } from "../../services/api";
+import { CopyJoinLink } from "./CopyJoinLink";
+import { getPublicJoinLink, presentationPath } from "./publicLinks";
+import { Results } from "./Results";
 import { getOrganizerSession } from "./session";
 import { usePublicPoll } from "./usePublicPoll";
 import { usePollLive } from "./usePollLive";
-
-function Results({ joinCode, status, refreshPoll, liveVersion }: {
-  joinCode: string;
-  status: PollStatus;
-  refreshPoll: () => void;
-  liveVersion: number;
-}) {
-  const [version, setVersion] = useState(0);
-  const requestVersion = version + liveVersion;
-  const [state, setState] = useState<{ version: number; status?: PollStatus; results?: PollResults; error?: string }>({ version: -1 });
-  const isLoading = state.version !== requestVersion || state.status !== status;
-
-  useEffect(() => {
-    const controller = new AbortController();
-    getPollResults(joinCode, controller.signal).then((results) => {
-      if (!controller.signal.aborted) setState({ version: requestVersion, status, results });
-    }).catch((error: unknown) => {
-      if (!controller.signal.aborted) {
-        const message = error instanceof Error ? error.message : "Could not load results.";
-        setState((current) => ({ ...current, version: requestVersion, status, error: message }));
-      }
-    });
-    return () => controller.abort();
-  }, [joinCode, status, requestVersion]);
-
-  return (
-    <section className="panel p-4 sm:p-6" aria-labelledby="results-heading">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 id="results-heading" className="text-lg font-extrabold">Results</h2>
-          {state.results && <p className="text-sm text-muted">{state.results.totalVotes} {state.results.totalVotes === 1 ? "vote" : "votes"} total</p>}
-        </div>
-        <button type="button" className="btn btn-secondary" disabled={isLoading} onClick={() => {
-          refreshPoll();
-          setVersion((value) => value + 1);
-        }}>
-          <Icon name="refresh" className="size-4" /> {isLoading ? "Refreshing…" : "Refresh results"}
-        </button>
-      </div>
-      {isLoading && <p role="status" className="mb-3 text-sm text-muted">Loading results…</p>}
-      {!isLoading && state.error && <Notice error>{state.error}</Notice>}
-      {state.results && (
-        <ol className="grid gap-4">
-          {state.results.options.map((option) => (
-            <li key={option.id}>
-              <div className="mb-1.5 flex items-start justify-between gap-3 text-sm">
-                <span className="min-w-0 font-bold wrap-anywhere">{option.text}</span>
-                <span className="shrink-0 tabular-nums text-muted">
-                  {option.voteCount} {option.voteCount === 1 ? "vote" : "votes"} · {option.percentage}%
-                </span>
-              </div>
-              <div aria-hidden="true" className="h-2 overflow-hidden rounded-full bg-line">
-                <div className="h-full origin-left rounded-full bg-linear-to-r from-accent to-accent-bright motion-safe:transition-transform motion-safe:duration-500 motion-safe:ease-out"
-                  style={{ transform: "scaleX(" + option.percentage / 100 + ")" }} />
-              </div>
-            </li>
-          ))}
-        </ol>
-      )}
-    </section>
-  );
-}
 
 function CloseConfirmation({ onCancel, onConfirm }: { onCancel: () => void; onConfirm: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -102,9 +43,7 @@ function Dashboard({ poll, joinCode, organizerToken, refreshPoll, applyStatus }:
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [confirmClose, setConfirmClose] = useState(false);
-  const [copyState, setCopyState] = useState<"idle" | "copied" | "manual">("idle");
-  const joinUrl = new URL("/join", window.location.origin);
-  joinUrl.searchParams.set("code", joinCode);
+  const joinLink = getPublicJoinLink(joinCode);
 
   async function transition(action: "activate" | "close") {
     setConfirmClose(false);
@@ -118,15 +57,6 @@ function Dashboard({ poll, joinCode, organizerToken, refreshPoll, applyStatus }:
       refreshPoll();
     } finally {
       setPending(false);
-    }
-  }
-
-  async function copyJoinLink() {
-    try {
-      await navigator.clipboard.writeText(joinUrl.href);
-      setCopyState("copied");
-    } catch {
-      setCopyState("manual");
     }
   }
 
@@ -170,16 +100,12 @@ function Dashboard({ poll, joinCode, organizerToken, refreshPoll, applyStatus }:
           <h2 id="share-poll" className="font-extrabold">Invite participants</h2>
           <p className="mt-1 text-sm leading-relaxed text-muted">Share the join link or give your audience this code.</p>
           <p className="my-4 rounded-xl border border-line bg-inset px-3 py-3 text-center font-mono text-lg font-bold tracking-widest text-accent-bright wrap-anywhere">{joinCode}</p>
-          <button type="button" className="btn btn-secondary w-full" onClick={() => void copyJoinLink()}>
-            <Icon name={copyState === "copied" ? "check" : "link"} className="size-4" />
-            {copyState === "copied" ? "Link copied" : "Copy join link"}
-          </button>
-          {copyState === "copied" && <span role="status" className="sr-only">Public join link copied.</span>}
-          {copyState === "manual" && (
-            <label className="mt-3 block text-sm text-muted">Select and copy this link
-              <input className="field mt-1" value={joinUrl.href} readOnly onFocus={(event) => event.target.select()} />
-            </label>
-          )}
+          <CopyJoinLink href={joinLink.href} />
+          <a href={presentationPath(joinCode)} target="_blank" rel="noopener noreferrer" className="btn btn-primary mt-2.5 w-full">
+            <Icon name="present" className="size-4" /> Open Presentation
+            <span className="sr-only"> (opens in a new tab)</span>
+          </a>
+          {joinLink.localOnly && <p className="mt-3 text-xs text-warning">This link works on this device only.</p>}
         </section>
         <aside className="panel p-4 text-sm leading-relaxed text-muted">
           <Icon name="lock" className="mb-2 size-4 text-accent-bright" />
