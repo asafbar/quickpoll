@@ -37,12 +37,12 @@ function Footer() {
 function App() {
   const path = window.location.pathname.replace(/\/+$/, "") || "/";
   const organizerId = /^\/organizer\/([1-9][0-9]{0,18})$/.exec(path)?.[1];
-  const joinCode = new URLSearchParams(window.location.search).get("code")?.trim() ?? "";
+  const joinCode = new URLSearchParams(window.location.search).get("code")?.trim();
   const createActive = path === "/create" || !!organizerId;
   const joinActive = path === "/join";
   const navClass = "rounded-lg px-2.5 py-2 text-sm font-bold hover:bg-accent-soft motion-safe:transition-colors sm:px-3";
 
-  if (path === "/present") return <Presentation joinCode={joinCode} />;
+  if (path === "/present") return <Presentation joinCode={joinCode ?? ""} />;
 
   return (
     <div className="flex min-h-dvh flex-col">

@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { Icon } from "../../components/Icon";
-import { ConnectionStatus, Notice, OptionList, PageIntro, StatusBadge } from "../../components/PollUi";
+import { ConnectionStatus, Notice, PageIntro, StatusBadge } from "../../components/PollUi";
 import { joinPoll } from "../../services/api";
 import type { ParticipantCredentials, PublicPoll } from "../../services/api";
 import { Ballot } from "./Ballot";
@@ -12,6 +12,7 @@ import { textLength, validText } from "./validation";
 
 function JoinDetails({ poll, joinCode, refreshPoll }: { poll: PublicPoll; joinCode: string; refreshPoll: () => void }) {
   const { connection } = usePollLive(joinCode, poll.id, refreshPoll);
+  const question = useRef<HTMLHeadingElement>(null);
   const [participant, setParticipant] = useState(() => getParticipantSession(poll.id));
   const [displayName, setDisplayName] = useState("");
   const [pending, setPending] = useState(false);
@@ -25,6 +26,7 @@ function JoinDetails({ poll, joinCode, refreshPoll }: { poll: PublicPoll; joinCo
       setUnsaved(null);
       setError("");
       setParticipant(credentials);
+      question.current?.focus();
     } catch {
       setUnsaved(credentials);
       setError("You joined the poll, but this tab could not save your access. Enable session storage and retry before leaving this page.");
@@ -47,57 +49,56 @@ function JoinDetails({ poll, joinCode, refreshPoll }: { poll: PublicPoll; joinCo
   }
 
   return (
-    <section className="panel p-4 sm:p-6" aria-labelledby="join-question">
+    <section className="panel p-5 sm:p-7" aria-labelledby="join-question">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-        <p className="eyebrow">{participant ? "Your ballot" : "Poll preview"}</p>
+        <p className="eyebrow">{participant ? "Your ballot" : "Poll invitation"}</p>
         <div className="flex flex-wrap items-center gap-3">
           <ConnectionStatus status={connection} />
           <span aria-live="polite"><StatusBadge status={poll.status} /></span>
         </div>
       </div>
-      <h2 id="join-question" className="mb-4 text-xl font-extrabold wrap-anywhere sm:text-2xl">{poll.question}</h2>
+      <h1 ref={question} id="join-question" tabIndex={-1}
+        className="text-2xl leading-tight font-extrabold tracking-tight wrap-anywhere focus:outline-none sm:text-3xl">
+        {poll.question}
+      </h1>
       {participant ? (
         <Ballot poll={poll} joinCode={joinCode} participant={participant} refreshPoll={refreshPoll} />
       ) : (
-        <>
-          <OptionList options={poll.options} />
-          <div className="mt-5 border-t border-line pt-5">
-            {poll.status === "draft" ? (
-              <Notice warning>This poll hasn’t opened yet. Check back after the organizer activates it.</Notice>
-            ) : poll.status === "closed" ? (
-              <Notice>This poll is closed and no longer accepting participants.</Notice>
-            ) : (
-              <form className="grid max-w-sm gap-3" onSubmit={submit}>
-                <div>
-                  <label htmlFor="display-name" className="mb-1.5 block font-extrabold">Display name</label>
-                  <input id="display-name" className="field" placeholder="Your name" value={displayName}
-                    autoComplete="nickname" aria-describedby="name-hint" aria-invalid={tooLong}
-                    onChange={(event) => setDisplayName(event.target.value)} disabled={pending || !!unsaved} required />
-                  <p id="name-hint" className={"mt-1 text-xs " + (tooLong ? "font-bold text-danger" : "text-muted")}>
-                    {tooLong ? "Use 100 characters or fewer." : "Use the name your group knows you by."}
-                  </p>
-                </div>
-                {error && <Notice error>{error}</Notice>}
-                {unsaved ? (
-                  <button type="button" className="btn btn-primary justify-self-start" onClick={() => saveAccess(unsaved)}>Retry saving access</button>
-                ) : (
-                  <button type="submit" className="btn btn-primary justify-self-start" disabled={!validText(displayName, 100) || pending}>
-                    {pending ? "Joining…" : "Join poll"} <Icon name="arrow" className="size-4" />
-                  </button>
-                )}
-              </form>
-            )}
-          </div>
-        </>
+        <div className="mt-6 border-t border-line pt-5">
+          {poll.status === "draft" ? (
+            <Notice warning>This poll hasn’t opened yet. Keep this page open to join when voting starts.</Notice>
+          ) : poll.status === "closed" ? (
+            <Notice>This poll is closed and no longer accepting participants.</Notice>
+          ) : (
+            <form className="grid max-w-sm gap-4" onSubmit={submit}>
+              <div>
+                <label htmlFor="display-name" className="mb-1.5 block font-extrabold">Display name</label>
+                <input id="display-name" className="field" placeholder="Your name" value={displayName}
+                  autoComplete="nickname" aria-describedby="name-hint" aria-invalid={tooLong}
+                  onChange={(event) => setDisplayName(event.target.value)} disabled={pending || !!unsaved} required />
+                <p id="name-hint" className={"mt-1 text-xs " + (tooLong ? "font-bold text-danger" : "text-muted")}>
+                  {tooLong ? "Use 100 characters or fewer." : "Use the name your group knows you by."}
+                </p>
+              </div>
+              {error && <Notice error>{error}</Notice>}
+              {unsaved ? (
+                <button type="button" className="btn btn-primary min-h-12 sm:justify-self-start" onClick={() => saveAccess(unsaved)}>Retry saving access</button>
+              ) : (
+                <button type="submit" className="btn btn-primary min-h-12 sm:justify-self-start" disabled={!validText(displayName, 100) || pending}>
+                  {pending ? "Joining…" : "Join poll"} <Icon name="arrow" className="size-4" />
+                </button>
+              )}
+            </form>
+          )}
+        </div>
       )}
     </section>
   );
 }
 
-export function JoinPoll({ joinCode }: { joinCode: string }) {
-  const [codeInput, setCodeInput] = useState(joinCode);
-  const invalidCode = !!joinCode && !validText(joinCode, 10);
-  const { poll, error, refresh } = usePublicPoll(invalidCode ? "" : joinCode);
+function JoinSearch() {
+  const [codeInput, setCodeInput] = useState("");
+  const invalidCode = !!codeInput && !validText(codeInput, 10);
 
   function findPoll(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -110,25 +111,52 @@ export function JoinPoll({ joinCode }: { joinCode: string }) {
       <PageIntro label="Participant access" title="Join a poll">
         Use the code or link shared by your poll organizer.
       </PageIntro>
-      <div className="grid max-w-3xl gap-5">
+      <div className="max-w-3xl">
         <form className="panel p-4 sm:p-6" onSubmit={findPoll}>
           <label htmlFor="join-code" className="mb-2 block font-extrabold">Join code</label>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
             <input id="join-code" className="field font-mono tracking-wider sm:max-w-xs" value={codeInput}
               onChange={(event) => setCodeInput(event.target.value)} placeholder="e.g. A9B3C7D2E1"
               autoCapitalize="characters" autoComplete="off" spellCheck={false} required
-              aria-describedby="code-hint" aria-invalid={!!codeInput && !validText(codeInput, 10)} />
+              aria-describedby="code-hint" aria-invalid={invalidCode} />
             <button type="submit" className="btn btn-primary min-h-12" disabled={!validText(codeInput, 10)}>
               Find poll <Icon name="arrow" className="size-4" />
             </button>
           </div>
-          <p id="code-hint" className="mt-2 text-xs text-muted">Enter the code exactly as shown by your organizer.</p>
+          <p id="code-hint" className={"mt-2 text-xs " + (invalidCode ? "text-danger" : "text-muted")}>
+            {invalidCode ? "Enter a join code of up to 10 characters." : "Enter the code exactly as shown by your organizer."}
+          </p>
         </form>
-        {invalidCode && <Notice error>Enter a valid join code of up to 10 characters.</Notice>}
-        {error && <Notice error>{error}</Notice>}
-        {poll ? <JoinDetails key={poll.id} poll={poll} joinCode={joinCode} refreshPoll={refresh} />
-          : joinCode && !invalidCode && !error ? <Notice>Looking up your poll…</Notice> : null}
       </div>
     </section>
   );
+}
+
+function DirectJoin({ joinCode }: { joinCode: string }) {
+  const validCode = validText(joinCode, 10);
+  const { poll, error, refresh } = usePublicPoll(validCode ? joinCode : "");
+
+  return (
+    <section className="shell py-7 sm:py-12">
+      <div className="mx-auto grid max-w-2xl gap-4">
+        {!poll && <h1 className="text-2xl font-extrabold tracking-tight sm:text-3xl">Join a poll</h1>}
+        {!validCode && <Notice error>This join link has an invalid code. Enter a code or ask the organizer for a new link.</Notice>}
+        {error && (
+          <div className="grid justify-items-start gap-3">
+            <Notice error>{error}</Notice>
+            <button type="button" className="btn btn-secondary" onClick={refresh}>Retry lookup</button>
+          </div>
+        )}
+        {poll ? <JoinDetails key={poll.id} poll={poll} joinCode={joinCode} refreshPoll={refresh} />
+          : validCode && !error ? <Notice>Looking up your poll…</Notice> : null}
+        <a href="/join" className="justify-self-start rounded-md px-2 py-2 text-sm font-bold text-accent-bright underline-offset-4 hover:underline">
+          Use a different code
+        </a>
+      </div>
+    </section>
+  );
+}
+
+export function JoinPoll({ joinCode }: { joinCode?: string }) {
+  return joinCode === undefined ? <JoinSearch /> : <DirectJoin joinCode={joinCode} />;
 }

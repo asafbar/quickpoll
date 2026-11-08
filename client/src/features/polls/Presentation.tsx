@@ -64,8 +64,11 @@ function JoinCard({ joinCode, closed }: { joinCode: string; closed: boolean }) {
         <p className="eyebrow mb-1">Join code</p>
         <p className="font-mono text-[clamp(1.25rem,2.6vw,2rem)] leading-tight font-bold tracking-wider text-accent-bright wrap-anywhere">{joinCode}</p>
       </div>
-      <a className="text-sm font-semibold text-muted underline decoration-accent-bright/50 underline-offset-4 wrap-anywhere hover:text-ink"
-        href={href} target="_blank" rel="noopener noreferrer">{href}</a>
+      <div className="min-w-0 text-sm">
+        <a className="font-semibold text-accent-bright underline underline-offset-4 hover:text-ink"
+          href={href} target="_blank" rel="noopener noreferrer">Open join link<span className="sr-only"> in a new tab</span></a>
+        <p className="mt-1 text-muted wrap-anywhere">{href}</p>
+      </div>
       <div className="w-full"><CopyJoinLink href={href} /></div>
     </aside>
   );

@@ -1,7 +1,7 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { Icon } from "../../components/Icon";
-import { Notice, OptionList } from "../../components/PollUi";
+import { Notice } from "../../components/PollUi";
 import { ApiError, castVote } from "../../services/api";
 import type { ParticipantCredentials, PublicPoll } from "../../services/api";
 import { hasConfirmedVote, rememberConfirmedVote } from "./session";
@@ -13,17 +13,24 @@ export function Ballot({ poll, joinCode, participant, refreshPoll }: {
   refreshPoll: () => void;
 }) {
   const [selected, setSelected] = useState("");
-  const [confirmed, setConfirmed] = useState(() => hasConfirmedVote(poll.id, participant.participantId));
+  const [confirmation, setConfirmation] = useState<"restored" | "recorded" | null>(
+    () => hasConfirmedVote(poll.id, participant.participantId) ? "restored" : null,
+  );
   const [blocked, setBlocked] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const submitting = useRef(false);
-  const canVote = poll.status === "active" && !confirmed && !blocked;
+  const confirmationMessage = useRef<HTMLDivElement>(null);
+  const canVote = poll.status === "active" && !confirmation && !blocked;
   const validSelection = poll.options.some((option) => option.id === selected);
+
+  useEffect(() => {
+    if (confirmation === "recorded") confirmationMessage.current?.focus();
+  }, [confirmation]);
 
   function confirmVote() {
     rememberConfirmedVote(poll.id, participant.participantId);
-    setConfirmed(true);
+    setConfirmation("recorded");
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -66,31 +73,35 @@ export function Ballot({ poll, joinCode, participant, refreshPoll }: {
   return (
     <>
       {canVote ? (
-        <form onSubmit={submit}>
+        <form className="mt-6 border-t border-line pt-5" onSubmit={submit}>
           <fieldset className="min-w-0" disabled={pending}>
-            <legend className="mb-3 text-sm text-muted">Choose one answer, then submit your vote.</legend>
-            <div className="grid gap-2.5">
+            <legend className="mb-3 text-sm font-semibold text-muted">Choose one answer, then submit your vote.</legend>
+            <div className="grid gap-3">
               {poll.options.map((option) => (
-                <label key={option.id} className="flex min-h-12 min-w-0 cursor-pointer items-center gap-3 rounded-xl border border-control bg-inset px-3 py-2.5 text-sm font-semibold motion-safe:transition-colors hover:border-accent-bright has-checked:border-accent-bright has-checked:bg-accent-soft has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent-bright has-disabled:cursor-not-allowed has-disabled:text-muted">
+                <label key={option.id} className="flex min-h-14 min-w-0 cursor-pointer items-center gap-3 rounded-xl border border-control bg-inset px-4 py-3 text-base font-semibold motion-safe:transition-colors hover:border-accent-bright has-checked:border-accent-bright has-checked:bg-accent-soft has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent-bright has-disabled:cursor-not-allowed has-disabled:text-muted">
                   <input type="radio" name="answer" value={option.id} checked={selected === option.id}
-                    className="size-4 shrink-0 accent-accent-bright" onChange={() => setSelected(option.id)} />
+                    className="size-5 shrink-0 accent-accent-bright" onChange={() => setSelected(option.id)} />
                   <span className="min-w-0 wrap-anywhere">{option.text}</span>
                 </label>
               ))}
             </div>
           </fieldset>
-          <div className="mt-5 grid justify-items-start gap-3 border-t border-line pt-5">
-            <button type="submit" className="btn btn-primary" disabled={!validSelection || pending}>
+          <div className="mt-5 grid gap-3 border-t border-line pt-5 sm:justify-items-start">
+            <button type="submit" className="btn btn-primary min-h-12" disabled={!validSelection || pending}>
               {pending ? "Submitting vote…" : "Submit vote"} <Icon name="arrow" className="size-4" />
             </button>
             <p className="text-xs text-muted">QuickPoll checks for a previous vote when you submit.</p>
           </div>
         </form>
-      ) : <OptionList options={poll.options} />}
-      {confirmed && (
-        <div role="status" className="mt-5 flex gap-3 rounded-xl border border-success/40 bg-success-soft p-4 text-success">
+      ) : null}
+      {confirmation && (
+        <div ref={confirmationMessage} tabIndex={-1} role="status"
+          className="mt-6 flex items-start gap-3 rounded-xl border border-success/40 bg-success-soft p-4 text-success focus:outline-none">
           <Icon name="check" className="size-5 shrink-0" />
-          <p className="font-extrabold">Your vote was recorded.</p>
+          <div>
+            <p className="font-extrabold">Your vote was recorded.</p>
+            <p className="mt-1 text-sm">Thanks for taking part.</p>
+          </div>
         </div>
       )}
       {poll.status === "closed" && <div className="mt-3"><Notice>This poll is closed. Voting has ended.</Notice></div>}
