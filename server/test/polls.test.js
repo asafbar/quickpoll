@@ -1,10 +1,11 @@
 const assert = require("node:assert/strict");
 const { test } = require("node:test");
 const pool = require("../src/config/db");
-const { createPoll } = require("../src/controllers/polls");
+const { createPoll, getPollByCode, joinPoll } = require("../src/controllers/polls");
 
-async function postPoll(body) {
+async function callController(controller, request) {
   const response = {
+    statusCode: 200,
     status(code) {
       this.statusCode = code;
       return this;
@@ -13,8 +14,12 @@ async function postPoll(body) {
       this.body = data;
     },
   };
-  await createPoll({ body }, response);
+  await controller(request, response);
   return response;
+}
+
+function postPoll(body) {
+  return callController(createPoll, { body });
 }
 
 function mockDatabase(t, { collisions = 0, optionError } = {}) {
@@ -119,4 +124,93 @@ test("rolls back an option insert failure and returns a generic error", async (t
   assert.deepEqual(response.body, { status: "error", message: "Could not create poll" });
   assert.equal(statements.at(-1).sql, "ROLLBACK");
   assert.equal(release.mock.callCount(), 1);
+});
+
+const params = { joinCode: "ABC123DEF4" };
+
+test("looks up the public poll with option IDs in display order", async (t) => {
+  const poll = {
+    id: "9007199254740993",
+    question: "Pick one",
+    status: "draft",
+    options: [{ id: "12", text: "B" }, { id: "11", text: "A" }],
+  };
+  const query = t.mock.method(pool, "query", async () => ({ rows: [poll] }));
+  const response = await callController(getPollByCode, { params });
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.body, poll);
+  const [sql, values] = query.mock.calls[0].arguments;
+  assert.match(sql, /ORDER BY o\.display_order/);
+  assert.deepEqual(values, [params.joinCode]);
+});
+
+test("returns 404 for unknown codes on lookup and join", async (t) => {
+  t.mock.method(pool, "query", async () => ({ rows: [] }));
+  const lookup = await callController(getPollByCode, { params });
+  const join = await callController(joinPoll, { params, body: { displayName: "Pat" } });
+
+  for (const response of [lookup, join]) {
+    assert.equal(response.statusCode, 404);
+    assert.deepEqual(response.body, { status: "error", message: "Poll not found" });
+  }
+});
+
+test("joins an active poll using a trimmed name and returns only the participant credentials", async (t) => {
+  const displayName = "😀".repeat(100);
+  const participantId = "9007199254740993";
+  const query = t.mock.method(pool, "query", async (sql, values) => ({
+    rows: [{ status: "active", participantId, participantToken: values[2] }],
+  }));
+  const response = await callController(joinPoll, {
+    params,
+    body: { displayName: ` ${displayName} ` },
+  });
+
+  assert.equal(response.statusCode, 201);
+  const [sql, values] = query.mock.calls[0].arguments;
+  const participantToken = values[2];
+  assert.deepEqual(values, [params.joinCode, displayName, participantToken]);
+  assert.match(participantToken, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  assert.match(sql, /FOR SHARE/);
+  assert.match(sql, /FROM matched_poll WHERE status = 'active'/);
+  assert.deepEqual(response.body, { participantId, participantToken });
+});
+
+test("returns 409 with the poll status for draft and closed polls", async (t) => {
+  const states = ["draft", "closed"];
+  t.mock.method(pool, "query", async () => ({
+    rows: [{ status: states.shift(), participantId: null, participantToken: null }],
+  }));
+
+  for (const status of ["draft", "closed"]) {
+    const response = await callController(joinPoll, { params, body: { displayName: "Pat" } });
+    assert.equal(response.statusCode, 409);
+    assert.deepEqual(response.body, {
+      status: "error",
+      message: `This poll is ${status}. Only active polls can be joined.`,
+    });
+  }
+});
+
+test("rejects invalid display names before querying the database", async (t) => {
+  const query = t.mock.method(pool, "query");
+  for (const displayName of [undefined, null, 4, "   ", "😀".repeat(101), "Pat\0", "\ud800"]) {
+    const response = await callController(joinPoll, { params, body: { displayName } });
+    assert.equal(response.statusCode, 400);
+    assert.equal(response.body.message, "Display name must be a string containing 1 to 100 characters");
+  }
+  assert.equal(query.mock.callCount(), 0);
+});
+
+test("returns generic errors when poll lookup or joining fails", async (t) => {
+  t.mock.method(pool, "query", async () => { throw new Error("private database details"); });
+  t.mock.method(console, "error", () => {});
+
+  const lookup = await callController(getPollByCode, { params });
+  const join = await callController(joinPoll, { params, body: { displayName: "Pat" } });
+  assert.equal(lookup.statusCode, 500);
+  assert.deepEqual(lookup.body, { status: "error", message: "Could not look up poll" });
+  assert.equal(join.statusCode, 500);
+  assert.deepEqual(join.body, { status: "error", message: "Could not join poll" });
 });

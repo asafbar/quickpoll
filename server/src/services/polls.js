@@ -1,9 +1,10 @@
-const { randomBytes } = require("node:crypto");
+const { randomBytes, randomUUID } = require("node:crypto");
 const pollRepository = require("../repositories/polls");
 
 const MAX_JOIN_CODE_ATTEMPTS = 5;
 
 class InvalidPollError extends Error {}
+class PollNotActiveError extends Error {}
 
 function validateText(value, maxLength, message) {
   const text = typeof value === "string" ? value.trim() : "";
@@ -41,4 +42,31 @@ async function createPoll(input) {
   return null;
 }
 
-module.exports = { createPoll, InvalidPollError };
+function getPollByCode(joinCode) {
+  if (joinCode.includes("\0")) return null;
+  return pollRepository.findPublicByCode(joinCode);
+}
+
+async function joinPoll(joinCode, input) {
+  const displayName = validateText(
+    input?.displayName,
+    100,
+    "Display name must be a string containing 1 to 100 characters",
+  );
+  if (joinCode.includes("\0")) return null;
+
+  const result = await pollRepository.insertParticipant({
+    joinCode,
+    displayName,
+    participantToken: randomUUID(),
+  });
+  if (!result) return null;
+
+  const { status, participantId, participantToken } = result;
+  if (status !== "active") {
+    throw new PollNotActiveError(`This poll is ${status}. Only active polls can be joined.`);
+  }
+  return { participantId, participantToken };
+}
+
+module.exports = { createPoll, getPollByCode, joinPoll, InvalidPollError, PollNotActiveError };

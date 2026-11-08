@@ -41,4 +41,38 @@ async function insertDraft({ joinCode, question, options }) {
   }
 }
 
-module.exports = { insertDraft };
+async function findPublicByCode(joinCode) {
+  const { rows: [poll] } = await pool.query(
+    `SELECT p.id, p.question, p.status,
+            COALESCE(
+              json_agg(json_build_object('id', o.id::text, 'text', o.option_text)
+                       ORDER BY o.display_order) FILTER (WHERE o.id IS NOT NULL),
+              '[]'::json
+            ) AS options
+     FROM polls p
+     LEFT JOIN poll_options o ON o.poll_id = p.id
+     WHERE p.join_code = $1
+     GROUP BY p.id`,
+    [joinCode],
+  );
+  return poll ?? null;
+}
+
+async function insertParticipant({ joinCode, displayName, participantToken }) {
+  // The shared row lock lets joins run concurrently and serializes them with status updates.
+  const { rows: [result] } = await pool.query(
+    `WITH matched_poll AS (
+       SELECT id, status FROM polls WHERE join_code = $1 FOR SHARE
+     ), participant AS (
+       INSERT INTO participants (poll_id, display_name, participant_token)
+       SELECT id, $2, $3 FROM matched_poll WHERE status = 'active'
+       RETURNING id AS "participantId", participant_token AS "participantToken"
+     )
+     SELECT matched_poll.status, participant."participantId", participant."participantToken"
+     FROM matched_poll LEFT JOIN participant ON true`,
+    [joinCode, displayName, participantToken],
+  );
+  return result ?? null;
+}
+
+module.exports = { insertDraft, findPublicByCode, insertParticipant };
