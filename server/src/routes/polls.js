@@ -1,5 +1,7 @@
 const express = require("express");
-const { createPoll, getPollByCode, joinPoll, activatePoll, closePoll } = require("../controllers/polls");
+const {
+  createPoll, getPollByCode, joinPoll, activatePoll, closePoll, castVote, getResults,
+} = require("../controllers/polls");
 
 const router = express.Router();
 const bodyErrors = {
@@ -24,6 +26,8 @@ const parseJson = express.json();
 router.post("/", parseJson, createPoll, handleBodyError("Could not create poll"));
 router.get("/code/:joinCode", getPollByCode);
 router.post("/code/:joinCode/join", parseJson, joinPoll, handleBodyError("Could not join poll"));
+router.post("/code/:joinCode/vote", parseJson, castVote, handleBodyError("Could not record vote"));
+router.get("/code/:joinCode/results", getResults);
 router.post("/:id/activate", activatePoll);
 router.post("/:id/close", closePoll);
 

@@ -1,7 +1,9 @@
 const { createHash, randomBytes, randomUUID, timingSafeEqual } = require("node:crypto");
+const { EventEmitter } = require("node:events");
 const pollRepository = require("../repositories/polls");
 
 const MAX_JOIN_CODE_ATTEMPTS = 5;
+const pollEvents = new EventEmitter();
 const PREVIOUS_STATUS = new Map([
   ["active", "draft"],
   ["closed", "active"],
@@ -11,6 +13,18 @@ class InvalidPollError extends Error {}
 class PollNotActiveError extends Error {}
 class OrganizerForbiddenError extends Error {}
 class PollTransitionError extends Error {}
+class ParticipantForbiddenError extends Error {}
+class DuplicateVoteError extends Error {}
+class ResultsUnavailableError extends Error {}
+
+function isPositiveBigintId(id) {
+  return typeof id === "string" && /^[1-9]\d{0,18}$/.test(id) && BigInt(id) <= 9223372036854775807n;
+}
+
+function isJoinCode(joinCode) {
+  return typeof joinCode === "string" && joinCode.length > 0 && joinCode.length <= 20 &&
+    !joinCode.includes("\0") && joinCode.isWellFormed() && [...joinCode].length <= 10;
+}
 
 function hashOrganizerToken(token) {
   return createHash("sha256").update(token).digest();
@@ -55,7 +69,7 @@ async function createPoll(input) {
 }
 
 function getPollByCode(joinCode) {
-  if (joinCode.includes("\0")) return null;
+  if (!isJoinCode(joinCode)) return null;
   return pollRepository.findPublicByCode(joinCode);
 }
 
@@ -65,7 +79,7 @@ async function joinPoll(joinCode, input) {
     100,
     "Display name must be a string containing 1 to 100 characters",
   );
-  if (joinCode.includes("\0")) return null;
+  if (!isJoinCode(joinCode)) return null;
 
   const result = await pollRepository.insertParticipant({
     joinCode,
@@ -82,7 +96,7 @@ async function joinPoll(joinCode, input) {
 }
 
 async function changePollStatus(id, organizerToken, nextStatus) {
-  if (!/^[1-9]\d{0,18}$/.test(id) || BigInt(id) > 9223372036854775807n) return null;
+  if (!isPositiveBigintId(id)) return null;
 
   const poll = await pollRepository.findLifecycleById(id);
   if (!poll) return null;
@@ -103,10 +117,50 @@ async function changePollStatus(id, organizerToken, nextStatus) {
     id, previousStatus, nextStatus, organizerTokenHash,
   });
   if (!updated) throw new PollTransitionError(conflictMessage);
+  pollEvents.emit("poll-status-updated", { pollId: updated.id, status: updated.status });
   return updated;
 }
 
+async function castVote(joinCode, participantToken, input) {
+  if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(participantToken)) {
+    throw new ParticipantForbiddenError("Participant access denied");
+  }
+  const optionId = input?.optionId;
+  if (!isPositiveBigintId(optionId)) {
+    throw new InvalidPollError("optionId must be a positive BIGINT ID string");
+  }
+  if (!isJoinCode(joinCode)) return null;
+
+  const result = await pollRepository.insertVote({ joinCode, participantToken, optionId });
+  if (!result) return null;
+  if (!result.authorized) throw new ParticipantForbiddenError("Participant access denied");
+  if (result.status !== "active") throw new PollNotActiveError("Only active polls accept votes");
+  if (!result.optionId) throw new InvalidPollError("Option does not belong to this poll");
+  if (!result.voteId) throw new DuplicateVoteError("This participant has already voted");
+
+  pollEvents.emit("results-updated", { pollId: result.pollId });
+  return { voteId: result.voteId, optionId: result.optionId };
+}
+
+async function getResults(joinCode) {
+  if (!isJoinCode(joinCode)) return null;
+  const poll = await pollRepository.findResultsByCode(joinCode);
+  if (!poll) return null;
+  if (poll.status === "draft") {
+    throw new ResultsUnavailableError("Results are unavailable while the poll is a draft");
+  }
+
+  const totalVotes = poll.options.reduce((total, option) => total + option.voteCount, 0);
+  const options = poll.options.map((option) => ({
+    ...option,
+    percentage: totalVotes === 0 ? 0 : Math.round(option.voteCount * 10000 / totalVotes) / 100,
+  }));
+  return { ...poll, totalVotes, options };
+}
+
 module.exports = {
-  createPoll, getPollByCode, joinPoll, changePollStatus,
+  createPoll, getPollByCode, joinPoll, changePollStatus, castVote, getResults,
+  isJoinCode, pollEvents,
   InvalidPollError, PollNotActiveError, OrganizerForbiddenError, PollTransitionError,
+  ParticipantForbiddenError, DuplicateVoteError, ResultsUnavailableError,
 };

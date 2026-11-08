@@ -1,8 +1,11 @@
 const assert = require("node:assert/strict");
-const { createHash, randomBytes } = require("node:crypto");
+const { createHash, randomBytes, randomUUID } = require("node:crypto");
 const { test } = require("node:test");
 const pool = require("../src/config/db");
-const { createPoll, getPollByCode, joinPoll, activatePoll, closePoll } = require("../src/controllers/polls");
+const { pollEvents } = require("../src/services/polls");
+const {
+  createPoll, getPollByCode, joinPoll, activatePoll, closePoll, castVote, getResults,
+} = require("../src/controllers/polls");
 
 async function callController(controller, request) {
   const response = {
@@ -295,6 +298,7 @@ test("returns 404 for missing polls and IDs outside the PostgreSQL bigint range"
 
 test("permits draft to active to closed and rejects all other transitions", async (t) => {
   const query = mockLifecycle(t, "draft");
+  const events = recordEvents(t, "poll-status-updated");
   const header = `bEaReR ${organizerToken}`;
   assert.equal((await transition(closePoll, header)).statusCode, 409);
   const activated = await transition(activatePoll, header);
@@ -307,6 +311,7 @@ test("permits draft to active to closed and rejects all other transitions", asyn
   assert.equal((await transition(closePoll, header)).statusCode, 409);
   assert.equal((await transition(activatePoll, header)).statusCode, 409);
   assert.equal(query.mock.calls.filter(({ arguments: [sql] }) => sql.startsWith("UPDATE")).length, 2);
+  assert.deepEqual(events, [{ pollId, status: "active" }, { pollId, status: "closed" }]);
 });
 
 test("rejects the losing transition when two requests read the same draft state", async (t) => {
@@ -324,4 +329,156 @@ test("rejects the losing transition when two requests read the same draft state"
 
   assert.deepEqual(results.map(({ statusCode }) => statusCode).sort(), [200, 409]);
   assert.equal(query.mock.callCount(), 4);
+});
+
+function recordEvents(t, name) {
+  const events = [];
+  const listener = (event) => events.push(event);
+  pollEvents.on(name, listener);
+  t.after(() => pollEvents.off(name, listener));
+  return events;
+}
+
+const participantToken = randomUUID();
+const optionId = "9223372036854775807";
+const ballot = { pollId, status: "active", authorized: true, optionId, voteId: "22" };
+
+function vote(body, authorization = `Bearer ${participantToken}`) {
+  return callController(castVote, { params, body, get: () => authorization });
+}
+
+test("requires participant bearer credentials and validates the option ID before writing", async (t) => {
+  const query = t.mock.method(pool, "query");
+  assert.equal((await vote({ optionId, participantId: "3" }, null)).statusCode, 401);
+  assert.equal((await vote({ optionId }, "Basic abc")).statusCode, 401);
+  assert.equal((await vote({ optionId }, "Bearer incorrect")).statusCode, 403);
+  for (const invalid of [undefined, 1, "0", "-1", " 1", "1.5", "9223372036854775808"]) {
+    assert.equal((await vote({ optionId: invalid })).statusCode, 400);
+  }
+  assert.equal(query.mock.callCount(), 0);
+});
+
+test("uses the poll lock and participant uniqueness constraint and emits after a successful write", async (t) => {
+  const events = recordEvents(t, "results-updated");
+  const { promise: committed, resolve } = Promise.withResolvers();
+  const query = t.mock.method(pool, "query", () => committed);
+  const response = vote({ optionId });
+
+  assert.equal(query.mock.callCount(), 1);
+  assert.deepEqual(events, []);
+  const [sql, values] = query.mock.calls[0].arguments;
+  assert.match(sql, /FOR SHARE/);
+  assert.match(sql, /participant\.poll_id = p\.id AND participant\.participant_token = \$2/);
+  assert.match(sql, /o\.poll_id = p\.id AND o\.id = \$3/);
+  assert.match(sql, /WHERE status = 'active'/);
+  assert.match(sql, /ON CONFLICT \(participant_id\) DO NOTHING/);
+  assert.deepEqual(values, [params.joinCode, participantToken, optionId]);
+  resolve({ rows: [ballot] });
+  const { statusCode, body } = await response;
+  assert.equal(statusCode, 201);
+  assert.deepEqual(body, { voteId: ballot.voteId, optionId });
+  assert.deepEqual(events, [{ pollId }]);
+});
+
+test("rejects unknown polls, foreign credentials and options, and inactive polls without emitting", async (t) => {
+  const events = recordEvents(t, "results-updated");
+  const cases = [
+    [[], 404],
+    [[{ ...ballot, authorized: false, voteId: null }], 403],
+    [[{ ...ballot, optionId: null, voteId: null }], 400],
+    [[{ ...ballot, status: "draft", voteId: null }], 409],
+    [[{ ...ballot, status: "closed", voteId: null }], 409],
+  ];
+  const query = t.mock.method(pool, "query");
+  for (const [rows, status] of cases) {
+    query.mock.mockImplementation(async () => ({ rows }));
+    assert.equal((await vote({ optionId })).statusCode, status);
+  }
+  assert.deepEqual(events, []);
+});
+
+test("returns one success for concurrent votes and rejects further duplicate votes", async (t) => {
+  const events = recordEvents(t, "results-updated");
+  const { promise: bothSubmitted, resolve } = Promise.withResolvers();
+  let attempts = 0;
+  t.mock.method(pool, "query", async () => {
+    const attempt = ++attempts;
+    if (attempt === 2) resolve();
+    await bothSubmitted;
+    return { rows: [attempt === 1 ? ballot : { ...ballot, voteId: null }] };
+  });
+
+  const results = await Promise.all([vote({ optionId }), vote({ optionId })]);
+  assert.deepEqual(results.map(({ statusCode }) => statusCode).sort(), [201, 409]);
+  assert.equal((await vote({ optionId })).statusCode, 409);
+  assert.deepEqual(events, [{ pollId }]);
+});
+
+test("returns a conflict when a pending vote observes a concurrent closure", async (t) => {
+  const events = recordEvents(t, "results-updated");
+  const { promise: pollLockReleased, resolve } = Promise.withResolvers();
+  let status = "active";
+  const query = t.mock.method(pool, "query", async () => {
+    await pollLockReleased;
+    return { rows: [{ ...ballot, status, voteId: null }] };
+  });
+  const pendingVote = vote({ optionId });
+  assert.equal(query.mock.callCount(), 1);
+
+  status = "closed";
+  resolve();
+  const response = await pendingVote;
+  assert.equal(response.statusCode, 409);
+  assert.equal(response.body.message, "Only active polls accept votes");
+  assert.deepEqual(events, []);
+});
+
+test("does not emit or leak credentials when the vote write fails", async (t) => {
+  const events = recordEvents(t, "results-updated");
+  t.mock.method(pool, "query", async () => { throw new Error(participantToken); });
+  const log = t.mock.method(console, "error", () => {});
+  const { statusCode, body } = await vote({ optionId });
+  assert.equal(statusCode, 500);
+  assert.deepEqual(body, { status: "error", message: "Could not record vote" });
+  assert.deepEqual(events, []);
+  assert.equal(log.mock.calls.flatMap(({ arguments: args }) => args).includes(participantToken), false);
+});
+
+test("returns ordered aggregate results, including zero votes and rounded percentages", async (t) => {
+  const options = [
+    { id: "12", text: "B", voteCount: 0 },
+    { id: "11", text: "A", voteCount: 0 },
+    { id: "13", text: "C", voteCount: 0 },
+  ];
+  const poll = { id: pollId, question: "Pick one", status: "active", options };
+  const query = t.mock.method(pool, "query", async () => ({ rows: [poll] }));
+  const empty = await callController(getResults, { params });
+  assert.equal(empty.statusCode, 200);
+  assert.deepEqual(empty.body, {
+    ...poll, totalVotes: 0, options: options.map((option) => ({ ...option, percentage: 0 })),
+  });
+
+  poll.status = "closed";
+  options[1].voteCount = 1;
+  options[2].voteCount = 2;
+  const populated = await callController(getResults, { params });
+  assert.equal(populated.statusCode, 200);
+  assert.deepEqual(populated.body, {
+    ...poll,
+    totalVotes: 3,
+    options: options.map((option, index) => ({ ...option, percentage: [0, 33.33, 66.67][index] })),
+  });
+  const [sql, values] = query.mock.calls[0].arguments;
+  assert.match(sql, /LEFT JOIN votes/);
+  assert.match(sql, /ORDER BY o\.display_order/);
+  assert.deepEqual(values, [params.joinCode]);
+});
+
+test("hides draft results and returns 404 for unknown codes", async (t) => {
+  const query = t.mock.method(pool, "query", async () => ({ rows: [{ status: "draft", options: [] }] }));
+  const draft = await callController(getResults, { params });
+  assert.equal(draft.statusCode, 409);
+  assert.equal(draft.body.options, undefined);
+  query.mock.mockImplementation(async () => ({ rows: [] }));
+  assert.equal((await callController(getResults, { params })).statusCode, 404);
 });

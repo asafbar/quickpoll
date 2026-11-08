@@ -1,5 +1,9 @@
 const pollService = require("../services/polls");
 
+function bearerToken(req) {
+  return /^Bearer +([A-Za-z0-9._~+/-]+=*)$/i.exec(req.get("Authorization"))?.[1];
+}
+
 async function createPoll(req, res) {
   try {
     const poll = await pollService.createPoll(req.body);
@@ -58,8 +62,7 @@ async function joinPoll(req, res) {
 
 function changePollStatus(nextStatus) {
   return async (req, res) => {
-    const authorization = req.get("Authorization");
-    const token = /^Bearer +([A-Za-z0-9._~+/-]+=*)$/i.exec(authorization)?.[1];
+    const token = bearerToken(req);
     if (!token) {
       return res.set("WWW-Authenticate", "Bearer").status(401).json({
         status: "error",
@@ -88,10 +91,54 @@ function changePollStatus(nextStatus) {
   };
 }
 
+async function castVote(req, res) {
+  const token = bearerToken(req);
+  if (!token) {
+    return res.set("WWW-Authenticate", "Bearer").status(401).json({
+      status: "error",
+      message: "Participant bearer token required",
+    });
+  }
+
+  try {
+    const vote = await pollService.castVote(req.params.joinCode, token, req.body);
+    if (!vote) return res.status(404).json({ status: "error", message: "Poll not found" });
+    res.status(201).json(vote);
+  } catch (error) {
+    if (error instanceof pollService.InvalidPollError) {
+      return res.status(400).json({ status: "error", message: error.message });
+    }
+    if (error instanceof pollService.ParticipantForbiddenError) {
+      return res.status(403).json({ status: "error", message: error.message });
+    }
+    if (error instanceof pollService.PollNotActiveError || error instanceof pollService.DuplicateVoteError) {
+      return res.status(409).json({ status: "error", message: error.message });
+    }
+    console.error("Vote failed:", error.code);
+    res.status(500).json({ status: "error", message: "Could not record vote" });
+  }
+}
+
+async function getResults(req, res) {
+  try {
+    const results = await pollService.getResults(req.params.joinCode);
+    if (!results) return res.status(404).json({ status: "error", message: "Poll not found" });
+    res.json(results);
+  } catch (error) {
+    if (error instanceof pollService.ResultsUnavailableError) {
+      return res.status(409).json({ status: "error", message: error.message });
+    }
+    console.error("Results lookup failed:", error.code);
+    res.status(500).json({ status: "error", message: "Could not load results" });
+  }
+}
+
 module.exports = {
   createPoll,
   getPollByCode,
   joinPoll,
   activatePoll: changePollStatus("active"),
   closePoll: changePollStatus("closed"),
+  castVote,
+  getResults,
 };

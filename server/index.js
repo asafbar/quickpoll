@@ -11,6 +11,7 @@ const httpServer = http.createServer(app);
 const PORT = process.env.PORT || 3001;
 const pool = require("./src/config/db");
 const pollRoutes = require("./src/routes/polls");
+const { attachPollSockets } = require("./src/sockets/polls");
 
 app.use(cors({ origin: "http://localhost:5173" }));
 app.use("/api/polls", pollRoutes);
@@ -21,6 +22,7 @@ const io = new Server(httpServer, {
     origin: "http://localhost:5173",
   },
 });
+attachPollSockets(io);
 
 app.get("/api/health", (req, res) => {
   res.json({

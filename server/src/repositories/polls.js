@@ -94,4 +94,58 @@ async function updatePollStatus({ id, previousStatus, nextStatus, organizerToken
   return poll ?? null;
 }
 
-module.exports = { insertDraft, findPublicByCode, insertParticipant, findLifecycleById, updatePollStatus };
+async function insertVote({ joinCode, participantToken, optionId }) {
+  // The shared lock keeps the poll active until this statement commits, while allowing other votes.
+  const { rows: [result] } = await pool.query(
+    `WITH matched_poll AS (
+       SELECT id, status FROM polls WHERE join_code = $1 FOR SHARE
+     ), ballot AS (
+       SELECT p.id AS poll_id, p.status, participant.id AS participant_id, o.id AS option_id
+       FROM matched_poll p
+       LEFT JOIN participants participant
+         ON participant.poll_id = p.id AND participant.participant_token = $2
+       LEFT JOIN poll_options o ON o.poll_id = p.id AND o.id = $3
+     ), inserted AS (
+       INSERT INTO votes (poll_id, participant_id, option_id)
+       SELECT poll_id, participant_id, option_id FROM ballot
+       WHERE status = 'active' AND participant_id IS NOT NULL AND option_id IS NOT NULL
+       ON CONFLICT (participant_id) DO NOTHING
+       RETURNING id
+     )
+     SELECT ballot.poll_id AS "pollId", ballot.status,
+            ballot.participant_id IS NOT NULL AS "authorized",
+            ballot.option_id AS "optionId", inserted.id AS "voteId"
+     FROM ballot LEFT JOIN inserted ON true`,
+    [joinCode, participantToken, optionId],
+  );
+  return result ?? null;
+}
+
+async function findResultsByCode(joinCode) {
+  const { rows: [poll] } = await pool.query(
+    `SELECT p.id, p.question, p.status,
+            COALESCE(
+              json_agg(json_build_object('id', o.id::text, 'text', o.option_text,
+                                         'voteCount', o.vote_count)
+                       ORDER BY o.display_order) FILTER (WHERE o.id IS NOT NULL),
+              '[]'::json
+            ) AS options
+     FROM polls p
+     LEFT JOIN LATERAL (
+       SELECT o.id, o.option_text, o.display_order, count(v.option_id) AS vote_count
+       FROM poll_options o
+       LEFT JOIN votes v ON v.poll_id = o.poll_id AND v.option_id = o.id
+       WHERE o.poll_id = p.id AND p.status <> 'draft'
+       GROUP BY o.id
+     ) o ON true
+     WHERE p.join_code = $1
+     GROUP BY p.id`,
+    [joinCode],
+  );
+  return poll ?? null;
+}
+
+module.exports = {
+  insertDraft, findPublicByCode, insertParticipant, findLifecycleById, updatePollStatus,
+  insertVote, findResultsByCode,
+};
