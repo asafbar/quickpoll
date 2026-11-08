@@ -1,5 +1,5 @@
 const express = require("express");
-const { createPoll, getPollByCode, joinPoll } = require("../controllers/polls");
+const { createPoll, getPollByCode, joinPoll, activatePoll, closePoll } = require("../controllers/polls");
 
 const router = express.Router();
 const bodyErrors = {
@@ -12,7 +12,7 @@ function handleBodyError(fallbackMessage) {
   return (error, req, res, _next) => {
     const message = bodyErrors[error.status];
     if (!message) {
-      console.error("Poll request parsing failed:", error);
+      console.error("Poll request parsing failed:", error.type);
       return res.status(500).json({ status: "error", message: fallbackMessage });
     }
 
@@ -24,5 +24,7 @@ const parseJson = express.json();
 router.post("/", parseJson, createPoll, handleBodyError("Could not create poll"));
 router.get("/code/:joinCode", getPollByCode);
 router.post("/code/:joinCode/join", parseJson, joinPoll, handleBodyError("Could not join poll"));
+router.post("/:id/activate", activatePoll);
+router.post("/:id/close", closePoll);
 
 module.exports = router;

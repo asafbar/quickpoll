@@ -10,13 +10,13 @@ async function createPoll(req, res) {
       });
     }
 
-    res.status(201).json(poll);
+    res.set("Cache-Control", "no-store").status(201).json(poll);
   } catch (error) {
     if (error instanceof pollService.InvalidPollError) {
       return res.status(400).json({ status: "error", message: error.message });
     }
 
-    console.error("Poll creation failed:", error);
+    console.error("Poll creation failed:", error.code);
     res.status(500).json({ status: "error", message: "Could not create poll" });
   }
 }
@@ -56,4 +56,42 @@ async function joinPoll(req, res) {
   }
 }
 
-module.exports = { createPoll, getPollByCode, joinPoll };
+function changePollStatus(nextStatus) {
+  return async (req, res) => {
+    const authorization = req.get("Authorization");
+    const token = /^Bearer +([A-Za-z0-9._~+/-]+=*)$/i.exec(authorization)?.[1];
+    if (!token) {
+      return res.set("WWW-Authenticate", "Bearer").status(401).json({
+        status: "error",
+        message: "Organizer bearer token required",
+      });
+    }
+
+    try {
+      const poll = await pollService.changePollStatus(req.params.id, token, nextStatus);
+      if (!poll) {
+        return res.status(404).json({ status: "error", message: "Poll not found" });
+      }
+
+      res.json(poll);
+    } catch (error) {
+      if (error instanceof pollService.OrganizerForbiddenError) {
+        return res.status(403).json({ status: "error", message: error.message });
+      }
+      if (error instanceof pollService.PollTransitionError) {
+        return res.status(409).json({ status: "error", message: error.message });
+      }
+
+      console.error("Poll status update failed:", error.code);
+      res.status(500).json({ status: "error", message: "Could not update poll status" });
+    }
+  };
+}
+
+module.exports = {
+  createPoll,
+  getPollByCode,
+  joinPoll,
+  activatePoll: changePollStatus("active"),
+  closePoll: changePollStatus("closed"),
+};

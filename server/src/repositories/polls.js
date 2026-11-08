@@ -1,6 +1,6 @@
 const pool = require("../config/db");
 
-async function insertDraft({ joinCode, question, options }) {
+async function insertDraft({ joinCode, question, options, organizerTokenHash }) {
   const client = await pool.connect();
   let rollbackError;
 
@@ -8,11 +8,11 @@ async function insertDraft({ joinCode, question, options }) {
     await client.query("BEGIN");
 
     const { rows: [poll] } = await client.query(
-      `INSERT INTO polls (join_code, question, status)
-       VALUES ($1, $2, 'draft')
+      `INSERT INTO polls (join_code, question, status, organizer_token_hash)
+       VALUES ($1, $2, 'draft', $3)
        ON CONFLICT (join_code) DO NOTHING
        RETURNING id, join_code AS "joinCode", question, status`,
-      [joinCode, question],
+      [joinCode, question, organizerTokenHash],
     );
 
     if (!poll) {
@@ -75,4 +75,23 @@ async function insertParticipant({ joinCode, displayName, participantToken }) {
   return result ?? null;
 }
 
-module.exports = { insertDraft, findPublicByCode, insertParticipant };
+async function findLifecycleById(id) {
+  const { rows: [poll] } = await pool.query(
+    'SELECT status, organizer_token_hash AS "organizerTokenHash" FROM polls WHERE id = $1',
+    [id],
+  );
+  return poll ?? null;
+}
+
+async function updatePollStatus({ id, previousStatus, nextStatus, organizerTokenHash }) {
+  // Recheck the authorized state and hash in the write to handle concurrent changes.
+  const { rows: [poll] } = await pool.query(
+    `UPDATE polls SET status = $1
+     WHERE id = $2 AND status = $3 AND organizer_token_hash = $4
+     RETURNING id, status`,
+    [nextStatus, id, previousStatus, organizerTokenHash],
+  );
+  return poll ?? null;
+}
+
+module.exports = { insertDraft, findPublicByCode, insertParticipant, findLifecycleById, updatePollStatus };

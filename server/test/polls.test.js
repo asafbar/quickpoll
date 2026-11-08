@@ -1,11 +1,17 @@
 const assert = require("node:assert/strict");
+const { createHash, randomBytes } = require("node:crypto");
 const { test } = require("node:test");
 const pool = require("../src/config/db");
-const { createPoll, getPollByCode, joinPoll } = require("../src/controllers/polls");
+const { createPoll, getPollByCode, joinPoll, activatePoll, closePoll } = require("../src/controllers/polls");
 
 async function callController(controller, request) {
   const response = {
     statusCode: 200,
+    headers: {},
+    set(name, value) {
+      this.headers[name] = value;
+      return this;
+    },
     status(code) {
       this.statusCode = code;
       return this;
@@ -54,17 +60,23 @@ test("trims input and creates a draft with ordered options in one transaction", 
   });
 
   assert.equal(response.statusCode, 201);
+  assert.equal(response.headers["Cache-Control"], "no-store");
   assert.match(response.body.joinCode, /^[0-9A-F]{10}$/);
+  const { organizerToken } = response.body;
+  assert.match(organizerToken, /^[A-Za-z0-9_-]{43}$/);
   assert.deepEqual(response.body, {
     id: "9007199254740993",
     joinCode: response.body.joinCode,
     question,
     status: "draft",
     options,
+    organizerToken,
   });
   assert.equal(statements.length, 4);
   assert.equal(statements[0].sql, "BEGIN");
-  assert.deepEqual(statements[1].params, [response.body.joinCode, question]);
+  assert.deepEqual(statements[1].params, [
+    response.body.joinCode, question, createHash("sha256").update(organizerToken).digest(),
+  ]);
   assert.match(statements[2].sql, /WITH ORDINALITY/);
   assert.deepEqual(statements[2].params, [response.body.id, options]);
   assert.equal(statements[3].sql, "COMMIT");
@@ -213,4 +225,103 @@ test("returns generic errors when poll lookup or joining fails", async (t) => {
   assert.deepEqual(lookup.body, { status: "error", message: "Could not look up poll" });
   assert.equal(join.statusCode, 500);
   assert.deepEqual(join.body, { status: "error", message: "Could not join poll" });
+});
+
+const pollId = "9007199254740993";
+const organizerToken = randomBytes(32).toString("base64url");
+const organizerTokenHash = createHash("sha256").update(organizerToken).digest();
+
+function transition(controller, authorization, id = pollId) {
+  return callController(controller, {
+    params: { id },
+    get: () => authorization,
+  });
+}
+
+function mockLifecycle(t, initialStatus, { readBarrier } = {}) {
+  let status = initialStatus;
+  return t.mock.method(pool, "query", async (sql, values) => {
+    if (sql.startsWith("SELECT")) {
+      assert.deepEqual(values, [pollId]);
+      const poll = { status, organizerTokenHash };
+      if (readBarrier) await readBarrier();
+      return { rows: [poll] };
+    }
+
+    const [nextStatus, id, previousStatus, hash] = values;
+    assert.match(sql, /WHERE id = \$2 AND status = \$3 AND organizer_token_hash = \$4/);
+    assert.equal(id, pollId);
+    assert.deepEqual(hash, organizerTokenHash);
+    if (status !== previousStatus) return { rows: [] };
+    status = nextStatus;
+    return { rows: [{ id, status }] };
+  });
+}
+
+test("requires a bearer authorization header before reading the database", async (t) => {
+  const query = t.mock.method(pool, "query");
+  for (const header of [undefined, "Basic abc", "Bearer", "Bearer two tokens"]) {
+    const response = await transition(activatePoll, header);
+    assert.equal(response.statusCode, 401);
+    assert.equal(response.headers["WWW-Authenticate"], "Bearer");
+  }
+  assert.equal(query.mock.callCount(), 0);
+});
+
+test("forbids an incorrect organizer token and denies access to historical polls", async (t) => {
+  const hashes = [organizerTokenHash, null];
+  const query = t.mock.method(pool, "query", async () => ({
+    rows: [{ status: "draft", organizerTokenHash: hashes.shift() }],
+  }));
+  const wrongToken = await transition(activatePoll, "Bearer incorrect");
+  const legacyPoll = await transition(activatePoll, `Bearer ${organizerToken}`);
+
+  for (const response of [wrongToken, legacyPoll]) {
+    assert.equal(response.statusCode, 403);
+    assert.deepEqual(response.body, { status: "error", message: "Organizer access denied" });
+  }
+  assert.equal(query.mock.callCount(), 2);
+  assert.ok(query.mock.calls.every(({ arguments: [sql] }) => sql.startsWith("SELECT")));
+});
+
+test("returns 404 for missing polls and IDs outside the PostgreSQL bigint range", async (t) => {
+  const query = t.mock.method(pool, "query", async () => ({ rows: [] }));
+  const header = `Bearer ${organizerToken}`;
+  assert.equal((await transition(activatePoll, header)).statusCode, 404);
+  assert.equal((await transition(activatePoll, header, "9223372036854775808")).statusCode, 404);
+  assert.equal((await transition(activatePoll, header, "invalid")).statusCode, 404);
+  assert.equal(query.mock.callCount(), 1);
+});
+
+test("permits draft to active to closed and rejects all other transitions", async (t) => {
+  const query = mockLifecycle(t, "draft");
+  const header = `bEaReR ${organizerToken}`;
+  assert.equal((await transition(closePoll, header)).statusCode, 409);
+  const activated = await transition(activatePoll, header);
+  assert.equal(activated.statusCode, 200);
+  assert.deepEqual(activated.body, { id: pollId, status: "active" });
+  assert.equal((await transition(activatePoll, header)).statusCode, 409);
+  const closed = await transition(closePoll, header);
+  assert.equal(closed.statusCode, 200);
+  assert.deepEqual(closed.body, { id: pollId, status: "closed" });
+  assert.equal((await transition(closePoll, header)).statusCode, 409);
+  assert.equal((await transition(activatePoll, header)).statusCode, 409);
+  assert.equal(query.mock.calls.filter(({ arguments: [sql] }) => sql.startsWith("UPDATE")).length, 2);
+});
+
+test("rejects the losing transition when two requests read the same draft state", async (t) => {
+  const { promise: bothRead, resolve } = Promise.withResolvers();
+  let reads = 0;
+  const query = mockLifecycle(t, "draft", {
+    readBarrier() {
+      reads += 1;
+      if (reads === 2) resolve();
+      return bothRead;
+    },
+  });
+  const header = `Bearer ${organizerToken}`;
+  const results = await Promise.all([transition(activatePoll, header), transition(activatePoll, header)]);
+
+  assert.deepEqual(results.map(({ statusCode }) => statusCode).sort(), [200, 409]);
+  assert.equal(query.mock.callCount(), 4);
 });

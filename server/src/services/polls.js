@@ -1,10 +1,20 @@
-const { randomBytes, randomUUID } = require("node:crypto");
+const { createHash, randomBytes, randomUUID, timingSafeEqual } = require("node:crypto");
 const pollRepository = require("../repositories/polls");
 
 const MAX_JOIN_CODE_ATTEMPTS = 5;
+const PREVIOUS_STATUS = new Map([
+  ["active", "draft"],
+  ["closed", "active"],
+]);
 
 class InvalidPollError extends Error {}
 class PollNotActiveError extends Error {}
+class OrganizerForbiddenError extends Error {}
+class PollTransitionError extends Error {}
+
+function hashOrganizerToken(token) {
+  return createHash("sha256").update(token).digest();
+}
 
 function validateText(value, maxLength, message) {
   const text = typeof value === "string" ? value.trim() : "";
@@ -33,10 +43,12 @@ async function createPoll(input) {
     throw new InvalidPollError("Options must be distinct");
   }
 
+  const organizerToken = randomBytes(32).toString("base64url");
+  const organizerTokenHash = hashOrganizerToken(organizerToken);
   for (let attempt = 0; attempt < MAX_JOIN_CODE_ATTEMPTS; attempt += 1) {
     const joinCode = randomBytes(5).toString("hex").toUpperCase();
-    const poll = await pollRepository.insertDraft({ joinCode, question, options });
-    if (poll) return poll;
+    const poll = await pollRepository.insertDraft({ joinCode, question, options, organizerTokenHash });
+    if (poll) return { ...poll, organizerToken };
   }
 
   return null;
@@ -69,4 +81,32 @@ async function joinPoll(joinCode, input) {
   return { participantId, participantToken };
 }
 
-module.exports = { createPoll, getPollByCode, joinPoll, InvalidPollError, PollNotActiveError };
+async function changePollStatus(id, organizerToken, nextStatus) {
+  if (!/^[1-9]\d{0,18}$/.test(id) || BigInt(id) > 9223372036854775807n) return null;
+
+  const poll = await pollRepository.findLifecycleById(id);
+  if (!poll) return null;
+
+  const { organizerTokenHash } = poll;
+  const suppliedHash = hashOrganizerToken(organizerToken);
+  if (organizerTokenHash?.length !== suppliedHash.length ||
+      !timingSafeEqual(organizerTokenHash, suppliedHash)) {
+    throw new OrganizerForbiddenError("Organizer access denied");
+  }
+
+  const previousStatus = PREVIOUS_STATUS.get(nextStatus);
+  if (!previousStatus) throw new PollTransitionError("Unsupported poll transition");
+  const conflictMessage = `Poll must be ${previousStatus} to become ${nextStatus}`;
+  if (poll.status !== previousStatus) throw new PollTransitionError(conflictMessage);
+
+  const updated = await pollRepository.updatePollStatus({
+    id, previousStatus, nextStatus, organizerTokenHash,
+  });
+  if (!updated) throw new PollTransitionError(conflictMessage);
+  return updated;
+}
+
+module.exports = {
+  createPoll, getPollByCode, joinPoll, changePollStatus,
+  InvalidPollError, PollNotActiveError, OrganizerForbiddenError, PollTransitionError,
+};
