@@ -1,0 +1,23 @@
+.app {
+  max-width: 960px;
+  margin: 80px auto;
+  padding: 24px;
+  text-align: center;
+}
+
+.app h1 {
+  font-size: 3rem;
+  margin-bottom: 12px;
+}
+
+.server-status {
+  margin: 40px auto;
+  padding: 24px;
+  max-width: 360px;
+  border: 1px solid #555;
+  border-radius: 12px;
+}
+
+.server-status h2 {
+  margin-top: 0;
+}
