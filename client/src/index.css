@@ -1,17 +1,85 @@
-:root {
-  font-family: Inter, system-ui, Arial, sans-serif;
-  color: #f5f5f5;
-  background: #141821;
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  --color-canvas: #101425;
+  --color-panel: #1c2136;
+  --color-inset: #151a2d;
+  --color-raised: #262c45;
+  --color-ink: #f3f1ff;
+  --color-muted: #b6bcd6;
+  --color-line: #353b55;
+  --color-control: #636d90;
+  --color-accent: #673de6;
+  --color-accent-hover: #744cf0;
+  --color-accent-bright: #c5b4ff;
+  --color-accent-soft: #30264f;
+  --color-danger: #ffb0be;
+  --color-danger-soft: #382336;
+  --color-warning: #ffda94;
+  --color-warning-soft: #372d30;
+  --color-success: #96e7c2;
+  --color-success-soft: #1b343a;
+  --shadow-panel: 0 16px 40px -24px rgb(0 0 0 / 65%);
 }
 
-* {
-  box-sizing: border-box;
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-canvas font-sans text-ink antialiased;
+    background-image: radial-gradient(ellipse 60rem 29rem at 82% 0%, #1e1b39, transparent);
+  }
+
+  :focus-visible {
+    @apply outline-2 outline-offset-4 outline-accent-bright;
+  }
+
+  button:not(:disabled) {
+    @apply cursor-pointer;
+  }
 }
 
-body {
-  margin: 0;
-  min-width: 320px;
+@layer components {
+  .shell {
+    @apply mx-auto w-full max-w-6xl px-5 sm:px-8;
+  }
+
+  .panel {
+    @apply min-w-0 rounded-3xl border border-line bg-panel shadow-panel;
+  }
+
+  .btn {
+    @apply inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold motion-safe:transition-colors;
+  }
+
+  .btn-primary {
+    @apply bg-accent text-white hover:bg-accent-hover;
+  }
+
+  .btn-secondary {
+    @apply border border-control bg-raised text-ink hover:border-accent-bright/70 hover:bg-accent-soft;
+  }
+
+  .btn-danger {
+    @apply bg-rose-800 text-white hover:bg-rose-700;
+  }
+
+  .btn:disabled {
+    @apply cursor-not-allowed border-line bg-raised text-muted;
+  }
+
+  .field {
+    @apply w-full min-w-0 rounded-xl border border-control bg-inset px-3.5 py-3 text-base text-ink placeholder:text-muted enabled:hover:border-accent-bright/70 focus:border-accent-bright focus:outline-2 focus:outline-offset-2 focus:outline-accent-bright disabled:cursor-not-allowed disabled:border-line disabled:bg-raised disabled:text-muted motion-safe:transition-colors;
+  }
+
+  .field[aria-invalid="true"] {
+    @apply border-danger;
+  }
+
+  .eyebrow {
+    @apply text-xs font-bold tracking-[0.16em] text-accent-bright uppercase;
+  }
 }

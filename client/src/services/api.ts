@@ -1,16 +1,93 @@
-export interface HealthResponse {
-  status: string;
-  service: string;
+export type PollStatus = "draft" | "active" | "closed";
+
+export interface PollOption {
+  id: string;
+  text: string;
 }
 
-const API_BASE_URL = "http://localhost:3001/api";
+export interface PublicPoll {
+  id: string;
+  question: string;
+  status: PollStatus;
+  options: PollOption[];
+}
 
-export async function getServerHealth(): Promise<HealthResponse> {
-  const response = await fetch(`${API_BASE_URL}/health`);
+interface CreatePollInput {
+  question: string;
+  options: string[];
+}
 
-  if (!response.ok) {
-    throw new Error(`Server returned HTTP ${response.status}`);
+export interface CreatedPoll extends CreatePollInput {
+  id: string;
+  joinCode: string;
+  status: PollStatus;
+  organizerToken: string;
+}
+
+export interface ParticipantCredentials {
+  participantId: string;
+  participantToken: string;
+}
+
+export interface PollResults extends Omit<PublicPoll, "options"> {
+  totalVotes: number;
+  options: (PollOption & { voteCount: number; percentage: number })[];
+}
+
+const apiBase = (import.meta.env.VITE_API_BASE_URL || "/api").replace(/\/$/, "");
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(apiBase + path, init);
+  } catch (error) {
+    if (init?.signal?.aborted) throw error;
+    throw new Error("Could not reach QuickPoll. Check your connection and try again.", { cause: error });
   }
 
-  return response.json() as Promise<HealthResponse>;
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(typeof data?.message === "string" ? data.message : "The request failed. Please try again.");
+  }
+  if (data === null) throw new Error("QuickPoll returned an unexpected response.");
+  return data as T;
+}
+
+function postJson<T>(path: string, body: object) {
+  return request<T>(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+function publicPollPath(joinCode: string) {
+  return "/polls/code/" + encodeURIComponent(joinCode);
+}
+
+export function getServerHealth(signal: AbortSignal) {
+  return request<{ status: string; service: string }>("/health", { signal });
+}
+
+export function createPoll(input: CreatePollInput) {
+  return postJson<CreatedPoll>("/polls", input);
+}
+
+export function getPoll(joinCode: string, signal: AbortSignal) {
+  return request<PublicPoll>(publicPollPath(joinCode), { signal });
+}
+
+export function changePollStatus(id: string, action: "activate" | "close", organizerToken: string) {
+  return request<Pick<PublicPoll, "id" | "status">>("/polls/" + encodeURIComponent(id) + "/" + action, {
+    method: "POST",
+    headers: { Authorization: "Bearer " + organizerToken },
+  });
+}
+
+export function joinPoll(joinCode: string, displayName: string) {
+  return postJson<ParticipantCredentials>(publicPollPath(joinCode) + "/join", { displayName });
+}
+
+export function getPollResults(joinCode: string, signal: AbortSignal) {
+  return request<PollResults>(publicPollPath(joinCode) + "/results", { signal });
 }
