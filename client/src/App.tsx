@@ -1,9 +1,13 @@
 import { useEffect, useState } from "react";
 import { Icon } from "./components/Icon";
-import { PageIntro } from "./components/PollUi";
+import { Notice, PageIntro } from "./components/PollUi";
+import { AccountGate } from "./features/auth/AccountGate";
+import { AuthForm } from "./features/auth/AuthForm";
+import { useOrganizerAccount } from "./features/auth/useOrganizerAccount";
 import { Home } from "./features/Home";
 import { CreatePoll } from "./features/polls/CreatePoll";
 import { JoinPoll } from "./features/polls/JoinPoll";
+import { MyPolls } from "./features/polls/MyPolls";
 import { Organizer } from "./features/polls/Organizer";
 import { Presentation } from "./features/polls/Presentation";
 import { getServerHealth } from "./services/api";
@@ -41,8 +45,25 @@ function App() {
   const createActive = path === "/create" || !!organizerId;
   const joinActive = path === "/join";
   const navClass = "rounded-lg px-2.5 py-2 text-sm font-bold hover:bg-accent-soft motion-safe:transition-colors sm:px-3";
+  const { account, retry, logout, signedOut } = useOrganizerAccount(path !== "/present");
+  const [leaving, setLeaving] = useState(false);
+  const [logoutError, setLogoutError] = useState("");
+  const signedIn = account.status === "signed-in";
 
   if (path === "/present") return <Presentation joinCode={joinCode ?? ""} />;
+
+  async function signOut() {
+    if (leaving) return;
+    setLeaving(true);
+    setLogoutError("");
+    try {
+      await logout();
+    } catch (error) {
+      setLogoutError(error instanceof Error ? error.message : "Could not log out. Try again.");
+    } finally {
+      setLeaving(false);
+    }
+  }
 
   return (
     <div className="flex min-h-dvh flex-col">
@@ -53,19 +74,47 @@ function App() {
             <span className="grid size-8 shrink-0 place-items-center rounded-xl bg-accent text-white sm:size-9"><Icon name="bars" className="size-4.5 sm:size-5" /></span>
             QuickPoll
           </a>
-          <nav aria-label="Main navigation" className="flex flex-wrap gap-1">
+          <nav aria-label="Main navigation" className="flex flex-wrap items-center gap-1">
             <a className={navClass + (createActive ? " bg-accent-soft text-accent-bright" : " text-muted")}
               href="/create" aria-current={path === "/create" ? "page" : undefined}>Create <span className="hidden min-[420px]:inline">Poll</span></a>
             <a className={navClass + (joinActive ? " bg-accent-soft text-accent-bright" : " text-muted")}
               href="/join" aria-current={joinActive ? "page" : undefined}>Join <span className="hidden min-[420px]:inline">Poll</span></a>
+            {signedIn ? (
+              <>
+                <a className={navClass + (path === "/my-polls" ? " bg-accent-soft text-accent-bright" : " text-muted")}
+                  href="/my-polls" aria-current={path === "/my-polls" ? "page" : undefined}>My Polls</a>
+                <button type="button" className={navClass + " text-muted disabled:opacity-60"}
+                  disabled={leaving} onClick={() => void signOut()}>{leaving ? "Logging out…" : "Logout"}</button>
+              </>
+            ) : account.status !== "loading" && (
+              <>
+                <a className={navClass + " text-muted"} href="/login" aria-current={path === "/login" ? "page" : undefined}>Login</a>
+                <a className={navClass + " text-accent-bright"} href="/register" aria-current={path === "/register" ? "page" : undefined}>Register</a>
+              </>
+            )}
           </nav>
         </div>
       </header>
       <main id="main" tabIndex={-1} className="grow focus:outline-none">
+        {logoutError && <div className="shell pt-4"><Notice error>{logoutError}</Notice></div>}
         {path === "/" ? <Home />
-          : path === "/create" ? <CreatePoll />
+          : path === "/create" ? <CreatePoll account={account} retryAccount={retry} onSignedOut={signedOut} />
           : path === "/join" ? <JoinPoll joinCode={joinCode} />
-          : organizerId ? <Organizer pollId={organizerId} />
+          : organizerId ? <Organizer pollId={organizerId} account={account} retryAccount={retry} onSignedOut={signedOut} />
+          : path === "/my-polls" ? (account.status === "signed-in"
+            ? <MyPolls key={account.organizer.id} onSignedOut={signedOut} />
+            : <section className="shell py-9 sm:py-14">
+              <PageIntro label="Organizer account" title="My Polls">Find the polls saved to your account.</PageIntro>
+              <AccountGate account={account} retry={retry}>{null}</AccountGate>
+            </section>)
+          : path === "/login" || path === "/register" ? (
+            account.status === "loading" ? <div className="shell py-9"><Notice>Checking your organizer session…</Notice></div>
+              : signedIn ? <section className="shell py-9">
+                <PageIntro label="Organizer account" title="You’re signed in">Open My Polls to manage your account’s polls.</PageIntro>
+                <a href="/my-polls" className="btn btn-primary">My Polls</a>
+              </section>
+                : <AuthForm key={path} register={path === "/register"} />
+          )
           : (
             <section className="shell py-12">
               <PageIntro label="404" title="Page not found">This QuickPoll page doesn’t exist.</PageIntro>

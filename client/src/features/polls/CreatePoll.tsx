@@ -2,18 +2,25 @@ import { useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { Icon } from "../../components/Icon";
 import { Notice, PageIntro } from "../../components/PollUi";
-import { createPoll } from "../../services/api";
+import { ApiError, createPoll, getOwnedPolls } from "../../services/api";
 import type { CreatedPoll } from "../../services/api";
+import type { AccountState } from "../auth/useOrganizerAccount";
 import { saveOrganizerSession } from "./session";
 import { textLength, validText } from "./validation";
 
-export function CreatePoll() {
+export function CreatePoll({ account, retryAccount, onSignedOut }: {
+  account: AccountState;
+  retryAccount: () => void;
+  onSignedOut: () => void;
+}) {
   const [question, setQuestion] = useState("");
   const [options, setOptions] = useState([{ id: 1, text: "" }, { id: 2, text: "" }]);
   const nextId = useRef(3);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [pendingPoll, setPendingPoll] = useState<CreatedPoll | null>(null);
+  const [checkingOwnership, setCheckingOwnership] = useState(false);
+  const canCreate = account.status === "signed-in" || account.status === "signed-out";
 
   const trimmedOptions = options.map(({ text }) => text.trim());
   const nonemptyOptions = trimmedOptions.filter(Boolean);
@@ -25,23 +32,48 @@ export function CreatePoll() {
       saveOrganizerSession(poll.id, poll);
     } catch {
       setPendingPoll(poll);
+      setCheckingOwnership(false);
       setError("Your poll was created, but this tab could not save organizer access. Enable session storage and retry before leaving this page.");
       return;
     }
     window.location.assign("/organizer/" + encodeURIComponent(poll.id));
   }
 
+  async function openOwnedPoll(poll: CreatedPoll) {
+    try {
+      const { polls } = await getOwnedPolls();
+      if (polls.some(({ id }) => id === poll.id)) {
+        window.location.assign("/organizer/" + encodeURIComponent(poll.id));
+        return;
+      }
+    } catch {
+      // The create response does not identify the owner, so keep its access token in memory while verification is unavailable.
+    }
+    setPendingPoll(poll);
+    setCheckingOwnership(true);
+    setError("Your poll was created, but account ownership could not be verified. Retry the check or keep access in this tab.");
+  }
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (isSubmitting || pendingPoll || !valid) return;
+    if (isSubmitting || pendingPoll || !valid || !canCreate) return;
 
     setError("");
     setIsSubmitting(true);
     try {
       const poll = await createPoll({ question: question.trim(), options: trimmedOptions });
-      saveAndOpen(poll);
+      if (account.status === "signed-in") {
+        await openOwnedPoll(poll);
+      } else {
+        saveAndOpen(poll);
+      }
     } catch (error) {
-      setError(error instanceof Error ? error.message : "Could not create your poll.");
+      if (error instanceof ApiError && error.status === 401) {
+        onSignedOut();
+        setError("Your organizer session ended. Sign in again to save this poll to your account.");
+      } else {
+        setError(error instanceof Error ? error.message : "Could not create your poll.");
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -106,11 +138,29 @@ export function CreatePoll() {
             </fieldset>
           </fieldset>
           <div className="mt-6 border-t border-line pt-5">
+            {account.status === "loading" && <div className="mb-3"><Notice>Checking your organizer session…</Notice></div>}
+            {account.status === "unavailable" && (
+              <div className="mb-3 grid justify-items-start gap-2">
+                <Notice error>{account.message}</Notice>
+                <button type="button" className="btn btn-secondary" onClick={retryAccount}>Retry session check</button>
+              </div>
+            )}
             {error && <div className="mb-3"><Notice error>{error}</Notice></div>}
-            {pendingPoll ? (
+            {pendingPoll && checkingOwnership ? (
+              <div className="flex flex-wrap gap-2">
+                <button type="button" className="btn btn-primary" disabled={isSubmitting} onClick={async () => {
+                  setIsSubmitting(true);
+                  await openOwnedPoll(pendingPoll);
+                  setIsSubmitting(false);
+                }}>Retry ownership check</button>
+                <button type="button" className="btn btn-secondary" disabled={isSubmitting} onClick={() => saveAndOpen(pendingPoll)}>
+                  Keep access in this tab
+                </button>
+              </div>
+            ) : pendingPoll ? (
               <button type="button" className="btn btn-primary" onClick={() => saveAndOpen(pendingPoll)}>Retry saving access</button>
             ) : (
-              <button className="btn btn-primary" type="submit" disabled={!valid || isSubmitting}>
+              <button className="btn btn-primary" type="submit" disabled={!valid || isSubmitting || !canCreate}>
                 {isSubmitting ? "Creating poll…" : "Create poll"} <Icon name="arrow" className="size-4" />
               </button>
             )}
@@ -120,6 +170,11 @@ export function CreatePoll() {
           <Icon name="lock" className="mb-3 size-5 text-accent-bright" />
           <h2 className="font-extrabold">You decide when it opens</h2>
           <p className="mt-2 text-sm leading-relaxed text-muted">Your poll starts as a draft. Review it on the dashboard, then activate it when your group is ready.</p>
+          {account.status === "signed-in" ? (
+            <p className="mt-3 text-sm text-muted">This poll will be saved to <span className="font-semibold wrap-anywhere">{account.organizer.email}</span>.</p>
+          ) : account.status === "signed-out" && (
+            <p className="mt-3 text-sm text-muted">Creating anonymously? Keep this tab open to manage the poll, or <a href="/login" className="font-bold text-accent-bright underline">sign in</a> first.</p>
+          )}
         </aside>
       </div>
     </section>

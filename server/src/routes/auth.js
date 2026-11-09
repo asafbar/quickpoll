@@ -18,7 +18,7 @@ router.get("/me", requireOrganizer, me);
 
 router.use((error, req, res, _next) => {
   if (error instanceof InvalidRegistrationError) {
-    return res.status(400).json({ status: "error", message: "Provide a valid email and a password of 15 to 128 characters" });
+    return res.status(400).json({ status: "error", message: "Provide a valid email and a password of 8 to 128 characters" });
   }
   if (error instanceof AuthBusyError) {
     return res.set("Retry-After", "1").status(429).json({ status: "error", message: "Authentication is busy. Try again shortly." });

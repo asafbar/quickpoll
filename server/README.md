@@ -10,7 +10,7 @@ Apply [database migration 003](../db/README.md) before running this server.
 | `GET /api/auth/me` | Valid session cookie | `200 { organizer: { id, email } }` |
 | `GET /api/organizer/polls` | Valid session cookie | `200 { polls: [{ id, joinCode, question, status, createdAt }] }` |
 
-Registration trims and lowercases email and accepts passwords of 15 to 128 Unicode characters without trimming. A duplicate registration returns a generic `409`. Login returns the same `401` for an unknown email or incorrect password. Registration does not sign the organizer in.
+Registration trims and lowercases email and accepts passwords of 8 to 128 Unicode characters without trimming. A duplicate registration returns a generic `409`. Login returns the same `401` for an unknown email or incorrect password. Registration does not sign the organizer in.
 
 Poll creation attaches the current account when a valid session cookie is supplied. Anonymous creation and the original Create Poll response still work. Activate and close accept either the original bearer token or the owner's session. An explicit Authorization header selects the bearer path. Historical polls can still be managed using their original bearer token if they have one.
 

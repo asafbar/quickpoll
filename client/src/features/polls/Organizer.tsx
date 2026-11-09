@@ -1,14 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "../../components/Icon";
 import { ConnectionStatus, Notice, OptionList, PageIntro, StatusBadge } from "../../components/PollUi";
-import { changePollStatus } from "../../services/api";
+import { ApiError, changePollStatus } from "../../services/api";
 import type { PollStatus, PublicPoll } from "../../services/api";
+import { AccountGate } from "../auth/AccountGate";
+import type { AccountState } from "../auth/useOrganizerAccount";
 import { CopyJoinLink } from "./CopyJoinLink";
 import { getPublicJoinLink, presentationPath } from "./publicLinks";
 import { Results } from "./Results";
 import { getOrganizerSession } from "./session";
 import { usePublicPoll } from "./usePublicPoll";
 import { usePollLive } from "./usePollLive";
+import { useOwnedPolls } from "./useOwnedPolls";
 
 function CloseConfirmation({ onCancel, onConfirm }: { onCancel: () => void; onConfirm: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -31,12 +34,13 @@ function CloseConfirmation({ onCancel, onConfirm }: { onCancel: () => void; onCo
   );
 }
 
-function Dashboard({ poll, joinCode, organizerToken, refreshPoll, applyStatus }: {
+function Dashboard({ poll, joinCode, organizerToken, refreshPoll, applyStatus, onSignedOut }: {
   poll: PublicPoll;
   joinCode: string;
-  organizerToken: string;
+  organizerToken?: string;
   refreshPoll: () => void;
   applyStatus: (status: PollStatus) => void;
+  onSignedOut: () => void;
 }) {
   const { status } = poll;
   const { connection, resultsVersion } = usePollLive(joinCode, poll.id, refreshPoll, true);
@@ -53,6 +57,10 @@ function Dashboard({ poll, joinCode, organizerToken, refreshPoll, applyStatus }:
       const updated = await changePollStatus(poll.id, action, organizerToken);
       applyStatus(updated.status);
     } catch (error) {
+      if (!organizerToken && error instanceof ApiError && error.status === 401) {
+        onSignedOut();
+        return;
+      }
       setError(error instanceof Error ? error.message : "Could not update the poll.");
       refreshPoll();
     } finally {
@@ -109,8 +117,17 @@ function Dashboard({ poll, joinCode, organizerToken, refreshPoll, applyStatus }:
         </section>
         <aside className="panel p-4 text-sm leading-relaxed text-muted">
           <Icon name="lock" className="mb-2 size-4 text-accent-bright" />
-          <h2 className="font-extrabold text-ink">Organizer access is tab-specific</h2>
-          <p className="mt-1">You can refresh this tab. Closing it or clearing browser storage can lose organizer access to this poll.</p>
+          {organizerToken ? (
+            <>
+              <h2 className="font-extrabold text-ink">Organizer access is tab-specific</h2>
+              <p className="mt-1">You can refresh this tab. Closing it or clearing browser storage can lose organizer access to this poll.</p>
+            </>
+          ) : (
+            <>
+              <h2 className="font-extrabold text-ink">Saved to your account</h2>
+              <p className="mt-1">Sign in on any device and open <a className="font-bold text-accent-bright underline" href="/my-polls">My Polls</a> to manage this poll.</p>
+            </>
+          )}
         </aside>
       </div>
       {confirmClose && status === "active" && <CloseConfirmation onCancel={() => setConfirmClose(false)} onConfirm={() => void transition("close")} />}
@@ -118,34 +135,74 @@ function Dashboard({ poll, joinCode, organizerToken, refreshPoll, applyStatus }:
   );
 }
 
-export function Organizer({ pollId }: { pollId: string }) {
-  const [session] = useState(() => getOrganizerSession(pollId));
-  const { poll, error, refresh, applyStatus } = usePublicPoll(session?.joinCode ?? "");
+function OrganizerPoll({ pollId, joinCode, organizerToken, onSignedOut }: {
+  pollId: string;
+  joinCode: string;
+  organizerToken?: string;
+  onSignedOut: () => void;
+}) {
+  const { poll, error, refresh, applyStatus } = usePublicPoll(joinCode);
+  if ((!poll && error) || (poll && poll.id !== pollId)) {
+    return (
+      <div className="grid max-w-xl justify-items-start gap-3">
+        <Notice error>{error ?? "The saved organizer access does not match this poll."}</Notice>
+        <button type="button" className="btn btn-secondary" onClick={refresh}>Retry</button>
+      </div>
+    );
+  }
+  if (!poll) return <Notice>Loading your poll…</Notice>;
+
+  return (
+    <>
+      {error && <div className="mb-4"><Notice error>{error}</Notice></div>}
+      <Dashboard poll={poll} joinCode={joinCode} organizerToken={organizerToken}
+        refreshPoll={refresh} applyStatus={applyStatus} onSignedOut={onSignedOut} />
+    </>
+  );
+}
+
+function OwnedOrganizer({ pollId, onSignedOut }: { pollId: string; onSignedOut: () => void }) {
+  const { polls, error, retry } = useOwnedPolls(onSignedOut);
+  if (error) {
+    return (
+      <div className="grid max-w-xl justify-items-start gap-3">
+        <Notice error>{error}</Notice>
+        <button type="button" className="btn btn-secondary" onClick={retry}>Retry</button>
+      </div>
+    );
+  }
+  if (!polls) return <Notice>Checking poll ownership…</Notice>;
+  const owned = polls.find((poll) => poll.id === pollId);
+  if (!owned) {
+    return (
+      <div className="grid max-w-xl justify-items-start gap-3">
+        <Notice error>This poll is not saved to your account and this tab has no organizer access to it.</Notice>
+        <a href="/my-polls" className="btn btn-secondary">Back to My Polls</a>
+      </div>
+    );
+  }
+  return <OrganizerPoll pollId={pollId} joinCode={owned.joinCode} onSignedOut={onSignedOut} />;
+}
+
+export function Organizer({ pollId, account, retryAccount, onSignedOut }: {
+  pollId: string;
+  account: AccountState;
+  retryAccount: () => void;
+  onSignedOut: () => void;
+}) {
+  const [legacy] = useState(() => getOrganizerSession(pollId));
 
   return (
     <section className="shell py-9 sm:py-14">
       <PageIntro label="Organizer dashboard" title="Manage your poll">
         Share access, control voting, and check the results.
       </PageIntro>
-      {!session ? (
-        <div className="panel max-w-xl p-5 sm:p-7">
-          <h2 className="text-lg font-extrabold">Organizer access is unavailable</h2>
-          <p className="mt-2 text-sm leading-relaxed text-muted">This tab has no organizer credentials for this poll. Return to the original tab if it’s still open.</p>
-          <a href="/create" className="btn btn-primary mt-4">Create another poll</a>
-        </div>
-      ) : (!poll && error) || (poll && poll.id !== pollId) ? (
-        <div className="grid max-w-xl justify-items-start gap-3">
-          <Notice error>{error ?? "The saved organizer access does not match this poll."}</Notice>
-          <button type="button" className="btn btn-secondary" onClick={() => window.location.reload()}>Retry</button>
-        </div>
-      ) : poll ? (
-        <>
-          {error && <div className="mb-4"><Notice error>{error}</Notice></div>}
-          <Dashboard poll={poll} joinCode={session.joinCode} organizerToken={session.organizerToken}
-            refreshPoll={refresh} applyStatus={applyStatus} />
-        </>
+      {legacy ? (
+        <OrganizerPoll pollId={pollId} joinCode={legacy.joinCode} organizerToken={legacy.organizerToken} onSignedOut={onSignedOut} />
       ) : (
-        <Notice>Loading your poll…</Notice>
+        <AccountGate account={account} retry={retryAccount}>
+          <OwnedOrganizer pollId={pollId} onSignedOut={onSignedOut} />
+        </AccountGate>
       )}
     </section>
   );

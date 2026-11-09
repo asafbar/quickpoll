@@ -39,6 +39,16 @@ export interface PollResults extends Omit<PublicPoll, "options"> {
   options: (PollOption & { voteCount: number; percentage: number })[];
 }
 
+export interface OrganizerAccount {
+  id: string;
+  email: string;
+}
+
+export interface OwnedPoll extends Omit<PublicPoll, "options"> {
+  joinCode: string;
+  createdAt: string;
+}
+
 const apiBase = (import.meta.env.VITE_API_BASE_URL || "/api").replace(/\/$/, "");
 export const apiOrigin = new URL(apiBase, window.location.origin).origin;
 
@@ -60,6 +70,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error("Could not reach QuickPoll. Check your connection and try again.", { cause: error });
   }
 
+  if (response.status === 204) return undefined as T;
   const data = await response.json().catch(() => null);
   if (!response.ok) {
     throw new ApiError(response.status, typeof data?.message === "string" ? data.message : "The request failed. Please try again.");
@@ -68,12 +79,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
-function postJson<T>(path: string, body: object, token?: string) {
+function postJson<T>(path: string, body: object, token?: string, credentials?: RequestCredentials) {
   const headers = new Headers({ "Content-Type": "application/json" });
   if (token) headers.set("Authorization", "Bearer " + token);
   return request<T>(path, {
     method: "POST",
     headers,
+    credentials,
     body: JSON.stringify(body),
   });
 }
@@ -87,17 +99,18 @@ export function getServerHealth(signal: AbortSignal) {
 }
 
 export function createPoll(input: CreatePollInput) {
-  return postJson<CreatedPoll>("/polls", input);
+  return postJson<CreatedPoll>("/polls", input, undefined, "include");
 }
 
 export function getPoll(joinCode: string, signal: AbortSignal) {
   return request<PublicPoll>(publicPollPath(joinCode), { signal });
 }
 
-export function changePollStatus(id: string, action: "activate" | "close", organizerToken: string) {
+export function changePollStatus(id: string, action: "activate" | "close", organizerToken?: string) {
   return request<Pick<PublicPoll, "id" | "status">>("/polls/" + encodeURIComponent(id) + "/" + action, {
     method: "POST",
-    headers: { Authorization: "Bearer " + organizerToken },
+    credentials: organizerToken ? "omit" : "include",
+    headers: organizerToken ? { Authorization: "Bearer " + organizerToken } : undefined,
   });
 }
 
@@ -111,4 +124,26 @@ export function castVote(joinCode: string, optionId: string, participantToken: s
 
 export function getPollResults(joinCode: string, signal: AbortSignal) {
   return request<PollResults>(publicPollPath(joinCode) + "/results", { signal });
+}
+
+type AccountResponse = { organizer: OrganizerAccount };
+
+export function registerOrganizer(email: string, password: string) {
+  return postJson<AccountResponse>("/auth/register", { email, password }, undefined, "include");
+}
+
+export function loginOrganizer(email: string, password: string) {
+  return postJson<AccountResponse>("/auth/login", { email, password }, undefined, "include");
+}
+
+export function logoutOrganizer() {
+  return request<void>("/auth/logout", { method: "POST", credentials: "include" });
+}
+
+export function getCurrentOrganizer() {
+  return request<AccountResponse>("/auth/me", { credentials: "include" });
+}
+
+export function getOwnedPolls(signal?: AbortSignal) {
+  return request<{ polls: OwnedPoll[] }>("/organizer/polls", { credentials: "include", signal });
 }

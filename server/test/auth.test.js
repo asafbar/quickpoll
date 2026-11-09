@@ -33,7 +33,8 @@ const organizer = { id: "7", email: "host@example.test" };
 const cookieHeader = (token) => sessionCookieName + "=" + token;
 const digest = (token) => createHash("sha256").update(token).digest();
 
-test("registration normalizes email, hashes passwords with random salts, and handles duplicate inserts", async (t) => {
+test("registers and signs in with an eight-character password and rejects duplicates", async (t) => {
+  const minimumCredentials = { ...credentials, password: "abcdefgh" };
   let registered = false;
   const query = t.mock.method(pool, "query", async (sql, [email, salt, hash]) => {
     assert.match(sql, /ON CONFLICT \(email\) DO NOTHING/);
@@ -46,22 +47,35 @@ test("registration normalizes email, hashes passwords with random salts, and han
   });
 
   const created = response();
-  await register(request(credentials), created);
+  await register(request(minimumCredentials), created);
   assert.equal(created.statusCode, 201);
   assert.deepEqual(created.body, { organizer });
   assert.equal(created.session, undefined);
   const duplicate = response();
-  await register(request(credentials), duplicate);
+  await register(request(minimumCredentials), duplicate);
   assert.equal(duplicate.statusCode, 409);
   const [first, second] = query.mock.calls.map(({ arguments: [, params] }) => params);
   assert.notDeepEqual(first[1], second[1]);
   assert.notDeepEqual(first[2], second[2]);
+
+  query.mock.mockImplementation(async (sql) => {
+    if (sql.includes("FROM organizers WHERE email")) {
+      return { rows: [{ ...organizer, salt: first[1], hash: first[2] }] };
+    }
+    assert.match(sql, /INSERT INTO organizer_sessions/);
+    return {};
+  });
+  const signedIn = response();
+  await login(request(minimumCredentials), signedIn);
+  assert.equal(signedIn.statusCode, 200);
+  assert.deepEqual(signedIn.body, { organizer });
+  assert.ok(signedIn.session);
 });
 
 test("invalid registration rejects malformed emails and short or oversized passwords before SQL", async (t) => {
   const query = t.mock.method(pool, "query");
   for (const body of [null, { ...credentials, email: "a..b@example.test" },
-    { ...credentials, password: "short" }, { ...credentials, password: "😀".repeat(129) }]) {
+    { ...credentials, password: "abcdefg" }, { ...credentials, password: "😀".repeat(129) }]) {
     await assert.rejects(register(request(body), response()), InvalidRegistrationError);
   }
   assert.equal(query.mock.callCount(), 0);

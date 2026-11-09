@@ -8,7 +8,11 @@ npm --prefix client run dev
 
 Open the Vite URL. Development and preview proxy `/api` and `/socket.io` to the local API. Set `QUICKPOLL_API_PROXY_TARGET` when starting Vite if the local API uses a different port. For production, route `/api` and `/socket.io` to the API, enable WebSocket upgrades, and serve `index.html` for client routes such as `/join` and `/organizer/123`. If the API permits the web origin, set `VITE_API_BASE_URL` at build time for a separate API origin. Socket.IO connects to that origin's `/socket.io` path.
 
-Organizer and participant access are stored per poll in the current tab's session storage. Participants can submit one vote while a poll is active. The tab remembers server-confirmed votes. Without a saved receipt, the server checks for duplicates on submission. Organizers receive live result updates and can refresh manually as a fallback.
+Register and sign in to save new polls to your account. Open **My Polls** to manage them on another device. Account sessions use a server-managed HttpOnly cookie. Anonymous and older polls still use their original tab-specific organizer access and are not added to your account automatically.
+
+Participants can join without an account and submit one vote while a poll is active. The tab remembers server-confirmed votes. Without a saved receipt, the server checks for duplicates on submission. Organizers receive live result updates and can refresh manually as a fallback.
+
+For account actions over HTTP on a trusted development LAN, add the exact frontend origin, including port, to `QUICKPOLL_ALLOWED_ORIGINS` in the server environment and restart the API. Keep `/api` on the same browser origin through the Vite proxy. Cookies are scoped to their host, so sign in separately when switching between localhost and the LAN address. HTTP development traffic is unencrypted. Production account sessions require HTTPS and an explicitly allowed HTTPS origin. See the [server auth guide](../server/README.md).
 
 ## Presentation and joining over Wi-Fi
 

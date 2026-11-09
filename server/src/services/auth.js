@@ -23,7 +23,7 @@ function validateCredentials(input) {
       password.length > 256 || !password.isWellFormed() || password.includes("\0")) return null;
 
   const length = [...password].length;
-  return length >= 15 && length <= 128 ? { email, password } : null;
+  return length >= 8 && length <= 128 ? { email, password } : null;
 }
 
 async function hashPassword(password, salt) {
