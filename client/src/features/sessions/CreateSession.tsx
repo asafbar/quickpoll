@@ -3,7 +3,6 @@ import type { FormEvent } from "react";
 import { Notice, PageIntro } from "../../components/PollUi";
 import { ApiError, createSession } from "../../services/api";
 import { textLength, validText } from "../polls/validation";
-import { demoTitle } from "./demo";
 
 export function CreateSession({ onSignedOut }: { onSignedOut: () => void }) {
   const [title, setTitle] = useState("");
@@ -43,8 +42,6 @@ export function CreateSession({ onSignedOut }: { onSignedOut: () => void }) {
         <p id="session-title-count" className={"mt-1 text-sm " + (length > 150 ? "text-danger" : "text-muted")}>
           {length} / 150 characters
         </p>
-        <button type="button" className="btn btn-secondary mt-3" disabled={pending || !!title.trim()}
-          onClick={() => setTitle(demoTitle)}>Use demo title</button>
         {error && <div className="mt-4"><Notice error>{error}</Notice></div>}
         <div className="mt-5 flex flex-wrap gap-2 border-t border-line pt-5">
           <button type="submit" className="btn btn-primary" disabled={pending || !validText(title, 150)}>

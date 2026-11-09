@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Icon } from "../../components/Icon";
 import { Notice } from "../../components/PollUi";
 import { getPollResults } from "../../services/api";
@@ -11,6 +11,17 @@ export function Results({ joinCode, status, refreshPoll, liveVersion, presentati
   liveVersion: number;
   presentation?: boolean;
 }) {
+  const load = useCallback((signal: AbortSignal) => getPollResults(joinCode, signal), [joinCode]);
+  return <ResultsPanel load={load} status={status} refreshPoll={refreshPoll} liveVersion={liveVersion} presentation={presentation} />;
+}
+
+export function ResultsPanel({ load, status, refreshPoll, liveVersion, presentation = false }: {
+  load: (signal: AbortSignal) => Promise<PollResults>;
+  status: PollStatus;
+  refreshPoll: () => void;
+  liveVersion: number;
+  presentation?: boolean;
+}) {
   const [version, setVersion] = useState(0);
   const requestVersion = version + liveVersion;
   const [state, setState] = useState<{ version: number; status?: PollStatus; results?: PollResults; error?: string }>({ version: -1 });
@@ -18,7 +29,7 @@ export function Results({ joinCode, status, refreshPoll, liveVersion, presentati
 
   useEffect(() => {
     const controller = new AbortController();
-    getPollResults(joinCode, controller.signal).then((results) => {
+    load(controller.signal).then((results) => {
       if (!controller.signal.aborted) setState({ version: requestVersion, status, results });
     }).catch((error: unknown) => {
       if (!controller.signal.aborted) {
@@ -27,7 +38,7 @@ export function Results({ joinCode, status, refreshPoll, liveVersion, presentati
       }
     });
     return () => controller.abort();
-  }, [joinCode, status, requestVersion]);
+  }, [load, status, requestVersion]);
 
   return (
     <section className={"panel p-4 " + (presentation ? "sm:p-6 xl:p-8" : "sm:p-6")} aria-labelledby="results-heading">
@@ -48,23 +59,30 @@ export function Results({ joinCode, status, refreshPoll, liveVersion, presentati
       {isLoading && <p role="status" className="mb-3 text-sm text-muted">Loading results…</p>}
       {!isLoading && state.error && <Notice error>{state.error}</Notice>}
       {state.results && (
-        <ol className={presentation ? "grid gap-5" : "grid gap-4"}>
-          {state.results.options.map((option) => (
-            <li key={option.id}>
-              <div className={"mb-1.5 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 " + (presentation ? "text-base sm:text-xl" : "text-sm")}>
-                <span className="min-w-0 font-bold wrap-anywhere">{option.text}</span>
-                <span className="shrink-0 tabular-nums text-muted">
-                  {option.voteCount} {option.voteCount === 1 ? "vote" : "votes"} · {option.percentage}%
-                </span>
-              </div>
-              <div aria-hidden="true" className={"overflow-hidden rounded-full bg-line " + (presentation ? "h-3" : "h-2")}>
-                <div className="h-full origin-left rounded-full bg-linear-to-r from-accent to-accent-bright motion-safe:transition-transform motion-safe:duration-500 motion-safe:ease-out"
-                  style={{ transform: "scaleX(" + option.percentage / 100 + ")" }} />
-              </div>
-            </li>
-          ))}
-        </ol>
+        <ResultBars results={state.results} presentation={presentation} />
       )}
     </section>
+  );
+}
+
+
+export function ResultBars({ results, presentation = false }: { results: PollResults; presentation?: boolean }) {
+  return (
+    <ol className={presentation ? "grid gap-5" : "grid gap-4"}>
+      {results.options.map((option) => (
+        <li key={option.id}>
+          <div className={"mb-1.5 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 " + (presentation ? "text-base sm:text-xl" : "text-sm")}>
+            <span className="min-w-0 font-bold wrap-anywhere">{option.text}</span>
+            <span className="shrink-0 tabular-nums text-muted">
+              {option.voteCount} {option.voteCount === 1 ? "vote" : "votes"} · {option.percentage}%
+            </span>
+          </div>
+          <div aria-hidden="true" className={"overflow-hidden rounded-full bg-line " + (presentation ? "h-3" : "h-2")}>
+            <div className="h-full origin-left rounded-full bg-linear-to-r from-accent to-accent-bright motion-safe:transition-transform motion-safe:duration-500 motion-safe:ease-out"
+              style={{ transform: "scaleX(" + option.percentage / 100 + ")" }} />
+          </div>
+        </li>
+      ))}
+    </ol>
   );
 }

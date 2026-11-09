@@ -3,14 +3,11 @@ import type { FormEvent } from "react";
 import { Notice } from "../../components/PollUi";
 import { ApiError, addSessionQuestion } from "../../services/api";
 import { textLength, validText } from "../polls/validation";
-import { demoQuestions, demoTitle } from "./demo";
 
 const emptyOptions = [{ id: 1, text: "" }, { id: 2, text: "" }];
 
-export function SessionQuestionForm({ id, title, count, disabled, onSaved, onSignedOut, reload }: {
+export function SessionQuestionForm({ id, disabled, onSaved, onSignedOut, reload }: {
   id: string;
-  title: string;
-  count: number;
   disabled: boolean;
   onSaved: (position: number) => void;
   onSignedOut: () => void;
@@ -25,7 +22,6 @@ export function SessionQuestionForm({ id, title, count, disabled, onSaved, onSig
   const trimmedOptions = options.map(({ text }) => text.trim());
   const valid = validText(question, 300) && options.every(({ text }) => validText(text, 150)) &&
     new Set(trimmedOptions).size === trimmedOptions.length;
-  const demo = title === demoTitle ? demoQuestions[count] : undefined;
   const questionLength = textLength(question);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -55,13 +51,6 @@ export function SessionQuestionForm({ id, title, count, disabled, onSaved, onSig
     <form className="panel p-5 sm:p-7" onSubmit={submit} aria-labelledby="add-question">
       <h2 id="add-question" className="mb-4 text-xl font-extrabold">Add question</h2>
       <fieldset disabled={disabled || pending} className="min-w-0">
-        {demo && (
-          <button type="button" className="btn btn-secondary mb-4" disabled={!!question.trim() || trimmedOptions.some(Boolean)}
-            onClick={() => {
-              setQuestion(demo.question);
-              setOptions(demo.options.map((text) => ({ id: nextId.current++, text })));
-            }}>Use demo question {count + 1}</button>
-        )}
         <label htmlFor="session-question" className="mb-2 block font-bold">Question</label>
         <textarea id="session-question" rows={3} className="field resize-y" value={question} required
           onChange={(event) => setQuestion(event.target.value)} aria-invalid={questionLength > 300}

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { buildPublicJoinLink, presentationPath } from "../src/features/polls/publicLinks.ts";
+import { sessionPublicPath } from "../src/features/sessions/publicPaths.ts";
 
 test("presentation and participant links carry only the encoded public join code", () => {
   const code = "A & B/?";
@@ -13,6 +14,18 @@ test("presentation and participant links carry only the encoded public join code
   assert.equal(new URL(participant.href).pathname, "/join");
   assert.deepEqual([...new URL(participant.href).searchParams], [["code", code]]);
   assert.equal(participant.localOnly, false);
+});
+
+test("session join, presentation, and summary links share only the public session code", () => {
+  const code = "A & B";
+  const origin = "http://192.168.1.42:5173";
+  const link = buildPublicJoinLink(code, "http://localhost:5173", origin, "/sessions/join");
+  assert.equal(link.href, new URL(sessionPublicPath("join", code), origin).href);
+  for (const view of ["join", "present", "summary"]) {
+    const url = new URL(sessionPublicPath(view, code), origin);
+    assert.equal(url.pathname, "/sessions/" + view);
+    assert.deepEqual([...url.searchParams], [["code", code]]);
+  }
 });
 
 test("rejects unsafe configuration and warns on loopback or unspecified fallback addresses", () => {

@@ -73,10 +73,12 @@ export const apiOrigin = new URL(apiBase, window.location.origin).origin;
 
 export class ApiError extends Error {
   readonly status: number;
+  readonly code?: string;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, code?: string) {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -92,7 +94,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (response.status === 204) return undefined as T;
   const data = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new ApiError(response.status, typeof data?.message === "string" ? data.message : "The request failed. Please try again.");
+    throw new ApiError(response.status, typeof data?.message === "string" ? data.message : "The request failed. Please try again.",
+      typeof data?.code === "string" ? data.code : undefined);
   }
   if (data === null) throw new Error("QuickPoll returned an unexpected response.");
   return data as T;
@@ -187,4 +190,56 @@ export function getSessionDetails(id: string, signal: AbortSignal) {
 
 export function addSessionQuestion(id: string, input: CreatePollInput) {
   return postJson<{ question: SessionQuestion }>(sessionPath(id) + "/questions", input, undefined, "include");
+}
+
+export interface PublicSession {
+  title: string;
+  joinCode: string;
+  status: PollStatus;
+  activeQuestionId: string | null;
+  currentQuestion: Omit<SessionQuestion, "options"> | null;
+}
+
+export type SessionResults = PollResults & { position: number };
+
+function publicSessionPath(code: string) {
+  return "/sessions/code/" + encodeURIComponent(code);
+}
+
+function sessionQuestionPath(code: string, id: string) {
+  return publicSessionPath(code) + "/questions/" + encodeURIComponent(id);
+}
+
+export function getPublicSession(code: string, signal: AbortSignal) {
+  return request<{ session: PublicSession }>(publicSessionPath(code), { signal, credentials: "omit" });
+}
+
+export function changeSessionStatus(id: string, action: "start" | "open" | "close", questionId?: string) {
+  const path = sessionPath(id) + (questionId ? "/questions/" + encodeURIComponent(questionId) : "");
+  return request<{ status: PollStatus }>(path + "/" + action, { method: "POST", credentials: "include" });
+}
+
+export function joinSession(code: string, displayName: string) {
+  return postJson<ParticipantCredentials>(publicSessionPath(code) + "/join", { displayName }, undefined, "omit");
+}
+
+export function getSessionQuestion(code: string, id: string, token: string, signal: AbortSignal) {
+  return request<{ question: SessionQuestion & { hasVoted: boolean } }>(sessionQuestionPath(code, id), {
+    signal, headers: { Authorization: "Bearer " + token }, credentials: "omit",
+  });
+}
+
+export function castSessionVote(code: string, id: string, optionId: string, token: string) {
+  return postJson<RecordedVote>(sessionQuestionPath(code, id) + "/vote", { optionId }, token, "omit");
+}
+
+export async function getSessionResults(code: string, id: string, signal: AbortSignal) {
+  const { results } = await request<{ results: SessionResults }>(sessionQuestionPath(code, id) + "/results", { signal, credentials: "omit" });
+  return results;
+}
+
+export function getSessionSummary(code: string, signal: AbortSignal) {
+  return request<{ summary: { title: string; status: PollStatus; questions: SessionResults[] } }>(
+    publicSessionPath(code) + "/summary", { signal, credentials: "omit" },
+  );
 }

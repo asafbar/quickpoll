@@ -2,35 +2,28 @@ import { useEffect, useState } from "react";
 import { io } from "socket.io-client";
 import type { Socket } from "socket.io-client";
 import { apiOrigin } from "../../services/api";
-import type { PollStatus } from "../../services/api";
 
 export type LiveStatus = "Live" | "Reconnecting" | "Offline";
 
-interface PollEvent {
-  pollId: string;
-}
+const pollRoom = { kind: "poll", idKey: "pollId", state: ["poll-status-updated"], results: "results-updated" } as const;
+const sessionRoom = {
+  kind: "session", idKey: "sessionId", state: ["session-state-updated", "session-completed"], results: "session-results-updated",
+} as const;
 
-type JoinAck = { ok: true; pollId: string } | { ok: false; status: number };
+type Room = typeof pollRoom | typeof sessionRoom;
+type RoomEvent = { pollId?: string; sessionId?: string };
+type JoinAck = ({ ok: true } & RoomEvent) | { ok: false; status: number };
 
-interface ServerEvents {
-  "results-updated": (event: PollEvent) => void;
-  "poll-status-updated": (event: PollEvent & { status: PollStatus }) => void;
-}
-
-interface ClientEvents {
-  "join-poll": (joinCode: string, acknowledge: (ack: JoinAck) => void) => void;
-  "leave-poll": (joinCode: string) => void;
-}
-
-export function usePollLive(joinCode: string, pollId: string | undefined, refreshPoll: () => void, watchResults = false) {
+function useLiveRoom(room: Room, joinCode: string, expectedId: string | undefined, refresh: () => void, watchResults: boolean) {
   const [connection, setConnection] = useState<LiveStatus>("Reconnecting");
   const [resultsVersion, setResultsVersion] = useState(0);
 
   useEffect(() => {
-    if (!pollId || !joinCode) return;
+    if (!joinCode) return;
 
-    const socket: Socket<ServerEvents, ClientEvents> = io(apiOrigin, { autoConnect: false });
+    const socket: Socket = io(apiOrigin, { autoConnect: false });
     let generation = 0;
+    let roomId: string | undefined;
     let retry: number | undefined;
     let resultsTimer: number | undefined;
 
@@ -43,19 +36,20 @@ export function usePollLive(joinCode: string, pollId: string | undefined, refres
     function joinRoom(current: number) {
       if (current !== generation || !socket.connected) return;
       setConnection("Reconnecting");
-      socket.timeout(5000).emit("join-poll", joinCode, (error, ack) => {
+      socket.timeout(5000).emit("join-" + room.kind, joinCode, (error: Error | null, ack?: JoinAck) => {
         if (current !== generation || !socket.connected) return;
-        if (error || (!ack.ok && ack.status >= 500)) {
+        if (error || !ack || (!ack.ok && ack.status >= 500)) {
           retry = window.setTimeout(() => joinRoom(current), 2000);
           return;
         }
-        if (!ack.ok || ack.pollId !== pollId) {
+        if (!ack.ok || !ack[room.idKey] || (expectedId && ack[room.idKey] !== expectedId)) {
           setConnection("Offline");
-          refreshPoll();
+          refresh();
           return;
         }
+        roomId = ack[room.idKey];
         setConnection("Live");
-        refreshPoll();
+        refresh();
         refreshResults();
       });
     }
@@ -67,6 +61,7 @@ export function usePollLive(joinCode: string, pollId: string | undefined, refres
 
     function onDisconnect() {
       generation++;
+      roomId = undefined;
       window.clearTimeout(retry);
       setConnection(socket.active && navigator.onLine ? "Reconnecting" : "Offline");
     }
@@ -80,12 +75,12 @@ export function usePollLive(joinCode: string, pollId: string | undefined, refres
       else if (socket.active) setConnection("Reconnecting");
     }
 
-    function onStatus(event: PollEvent) {
-      if (event.pollId === pollId) refreshPoll();
+    function onStatus(event: RoomEvent) {
+      if (roomId && event[room.idKey] === roomId) refresh();
     }
 
-    function onResults(event: PollEvent) {
-      if (event.pollId === pollId && resultsTimer === undefined) {
+    function onResults(event: RoomEvent) {
+      if (roomId && event[room.idKey] === roomId && resultsTimer === undefined) {
         // A burst of votes only needs one fresh snapshot.
         resultsTimer = window.setTimeout(refreshResults, 150);
       }
@@ -94,8 +89,8 @@ export function usePollLive(joinCode: string, pollId: string | undefined, refres
     socket.on("connect", onConnect);
     socket.on("disconnect", onDisconnect);
     socket.on("connect_error", onDisconnect);
-    socket.on("poll-status-updated", onStatus);
-    if (watchResults) socket.on("results-updated", onResults);
+    for (const event of room.state) socket.on(event, onStatus);
+    if (watchResults) socket.on(room.results, onResults);
     window.addEventListener("offline", onOffline);
     window.addEventListener("online", onOnline);
     socket.connect();
@@ -109,12 +104,20 @@ export function usePollLive(joinCode: string, pollId: string | undefined, refres
       socket.off("connect", onConnect);
       socket.off("disconnect", onDisconnect);
       socket.off("connect_error", onDisconnect);
-      socket.off("poll-status-updated", onStatus);
-      socket.off("results-updated", onResults);
-      if (socket.connected) socket.emit("leave-poll", joinCode);
+      for (const event of room.state) socket.off(event, onStatus);
+      socket.off(room.results, onResults);
+      if (socket.connected) socket.emit("leave-" + room.kind, joinCode);
       socket.disconnect();
     };
-  }, [joinCode, pollId, refreshPoll, watchResults]);
+  }, [room, joinCode, expectedId, refresh, watchResults]);
 
   return { connection, resultsVersion };
+}
+
+export function usePollLive(joinCode: string, pollId: string | undefined, refresh: () => void, watchResults = false) {
+  return useLiveRoom(pollRoom, pollId ? joinCode : "", pollId, refresh, watchResults);
+}
+
+export function useSessionLive(joinCode: string, refresh: () => void, watchResults = true) {
+  return useLiveRoom(sessionRoom, joinCode, undefined, refresh, watchResults);
 }

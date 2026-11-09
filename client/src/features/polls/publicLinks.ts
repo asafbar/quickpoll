@@ -2,7 +2,7 @@ export function presentationPath(joinCode: string) {
   return "/present?" + new URLSearchParams({ code: joinCode }).toString();
 }
 
-export function buildPublicJoinLink(joinCode: string, browserOrigin: string, configuredUrl?: string) {
+export function buildPublicJoinLink(joinCode: string, browserOrigin: string, configuredUrl?: string, joinPath: "/join" | "/sessions/join" = "/join") {
   let origin = browserOrigin;
   let invalidConfiguration = false;
 
@@ -19,7 +19,7 @@ export function buildPublicJoinLink(joinCode: string, browserOrigin: string, con
     }
   }
 
-  const url = new URL("/join", origin);
+  const url = new URL(joinPath, origin);
   url.searchParams.set("code", joinCode);
   const host = url.hostname.replace(/\.$/, "");
   const localOnly = host === "localhost" || host.endsWith(".localhost") || /^127(?:\.\d{1,3}){3}$/.test(host) ||
@@ -28,6 +28,6 @@ export function buildPublicJoinLink(joinCode: string, browserOrigin: string, con
   return { href: url.href, invalidConfiguration, localOnly };
 }
 
-export function getPublicJoinLink(joinCode: string) {
-  return buildPublicJoinLink(joinCode, window.location.origin, import.meta.env.VITE_PUBLIC_APP_URL);
+export function getPublicJoinLink(joinCode: string, joinPath?: "/join" | "/sessions/join") {
+  return buildPublicJoinLink(joinCode, window.location.origin, import.meta.env.VITE_PUBLIC_APP_URL, joinPath);
 }

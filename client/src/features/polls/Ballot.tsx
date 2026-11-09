@@ -2,26 +2,30 @@ import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { Icon } from "../../components/Icon";
 import { Notice } from "../../components/PollUi";
-import { ApiError, castVote } from "../../services/api";
+import { ApiError, castSessionVote, castVote } from "../../services/api";
 import type { ParticipantCredentials, PublicPoll } from "../../services/api";
 import { hasConfirmedVote, rememberConfirmedVote } from "./session";
 
-export function Ballot({ poll, joinCode, participant, refreshPoll }: {
+export function Ballot({ poll, joinCode, participant, refreshPoll, sessionHasVoted, disabled = false }: {
   poll: PublicPoll;
   joinCode: string;
   participant: ParticipantCredentials;
   refreshPoll: () => void;
+  sessionHasVoted?: boolean;
+  disabled?: boolean;
 }) {
+  const isSession = sessionHasVoted !== undefined;
   const [selected, setSelected] = useState("");
   const [confirmation, setConfirmation] = useState<"restored" | "recorded" | null>(
-    () => hasConfirmedVote(poll.id, participant.participantId) ? "restored" : null,
+    () => !isSession && hasConfirmedVote(poll.id, participant.participantId) ? "restored" : null,
   );
   const [blocked, setBlocked] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const submitting = useRef(false);
   const confirmationMessage = useRef<HTMLDivElement>(null);
-  const canVote = poll.status === "active" && !confirmation && !blocked;
+  const confirmed = confirmation || sessionHasVoted;
+  const canVote = poll.status === "active" && !confirmed && !blocked;
   const validSelection = poll.options.some((option) => option.id === selected);
 
   useEffect(() => {
@@ -29,34 +33,35 @@ export function Ballot({ poll, joinCode, participant, refreshPoll }: {
   }, [confirmation]);
 
   function confirmVote() {
-    rememberConfirmedVote(poll.id, participant.participantId);
+    if (!isSession) rememberConfirmedVote(poll.id, participant.participantId);
     setConfirmation("recorded");
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!canVote || !validSelection || submitting.current) return;
+    if (!canVote || !validSelection || submitting.current || disabled) return;
 
     submitting.current = true;
     setPending(true);
     setError("");
     try {
-      await castVote(joinCode, selected, participant.participantToken);
+      if (isSession) await castSessionVote(joinCode, poll.id, selected, participant.participantToken);
+      else await castVote(joinCode, selected, participant.participantToken);
       confirmVote();
     } catch (error) {
       if (error instanceof ApiError) {
-        if (error.status === 409 && error.message === "This participant has already voted") {
+        if (error.status === 409 && (isSession ? error.code === "ALREADY_VOTED" : error.message === "This participant has already voted")) {
           confirmVote();
         } else if (error.status === 401 || error.status === 403) {
           setBlocked(true);
-          setError("Your participant access is no longer valid for this poll.");
+          setError(isSession ? "Your participant access is no longer valid for this session." : "Your participant access is no longer valid for this poll.");
         } else if (error.status === 404) {
           setBlocked(true);
           setError("This poll is no longer available.");
           refreshPoll();
         } else if (error.status === 409) {
           setBlocked(true);
-          setError("This poll is no longer accepting votes.");
+          setError(isSession ? "This question is no longer accepting votes." : "This poll is no longer accepting votes.");
           refreshPoll();
         } else {
           setError(error.message);
@@ -74,7 +79,7 @@ export function Ballot({ poll, joinCode, participant, refreshPoll }: {
     <>
       {canVote ? (
         <form className="mt-6 border-t border-line pt-5" onSubmit={submit}>
-          <fieldset className="min-w-0" disabled={pending}>
+          <fieldset className="min-w-0" disabled={pending || disabled}>
             <legend className="mb-3 text-sm font-semibold text-muted">Choose one answer, then submit your vote.</legend>
             <div className="grid gap-3">
               {poll.options.map((option) => (
@@ -87,20 +92,20 @@ export function Ballot({ poll, joinCode, participant, refreshPoll }: {
             </div>
           </fieldset>
           <div className="mt-5 grid gap-3 border-t border-line pt-5 sm:justify-items-start">
-            <button type="submit" className="btn btn-primary min-h-12" disabled={!validSelection || pending}>
+            <button type="submit" className="btn btn-primary min-h-12" disabled={!validSelection || pending || disabled}>
               {pending ? "Submitting vote…" : "Submit vote"} <Icon name="arrow" className="size-4" />
             </button>
             <p className="text-xs text-muted">QuickPoll checks for a previous vote when you submit.</p>
           </div>
         </form>
       ) : null}
-      {confirmation && (
+      {confirmed && (
         <div ref={confirmationMessage} tabIndex={-1} role="status"
           className="mt-6 flex items-start gap-3 rounded-xl border border-success/40 bg-success-soft p-4 text-success focus:outline-none">
           <Icon name="check" className="size-5 shrink-0" />
           <div>
             <p className="font-extrabold">Your vote was recorded.</p>
-            <p className="mt-1 text-sm">Thanks for taking part.</p>
+            <p className="mt-1 text-sm">{isSession ? "Stay here for the next question." : "Thanks for taking part."}</p>
           </div>
         </div>
       )}

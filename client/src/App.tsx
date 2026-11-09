@@ -13,6 +13,8 @@ import { Presentation } from "./features/polls/Presentation";
 import { CreateSession } from "./features/sessions/CreateSession";
 import { MySessions } from "./features/sessions/MySessions";
 import { SessionBuilder } from "./features/sessions/SessionBuilder";
+import { SessionJoin } from "./features/sessions/SessionJoin";
+import { SessionPresentation } from "./features/sessions/SessionPresentation";
 import { getServerHealth } from "./services/api";
 
 function Footer() {
@@ -50,12 +52,14 @@ function App() {
   const createActive = path === "/create" || !!organizerId;
   const joinActive = path === "/join";
   const navClass = "rounded-lg px-2.5 py-2 text-sm font-bold hover:bg-accent-soft motion-safe:transition-colors sm:px-3";
-  const { account, retry, logout, signedOut } = useOrganizerAccount(path !== "/present");
+  const presentingSession = path === "/sessions/present" || path === "/sessions/summary";
+  const { account, retry, logout, signedOut } = useOrganizerAccount(path !== "/present" && !presentingSession);
   const [leaving, setLeaving] = useState(false);
   const [logoutError, setLogoutError] = useState("");
   const signedIn = account.status === "signed-in";
 
   if (path === "/present") return <Presentation joinCode={joinCode ?? ""} />;
+  if (presentingSession) return <SessionPresentation code={joinCode ?? ""} summaryOnly={path === "/sessions/summary"} />;
 
   async function signOut() {
     if (leaving) return;
@@ -107,6 +111,7 @@ function App() {
         {path === "/" ? <Home />
           : path === "/create" ? <CreatePoll account={account} retryAccount={retry} onSignedOut={signedOut} />
           : path === "/join" ? <JoinPoll joinCode={joinCode} />
+          : path === "/sessions/join" ? <SessionJoin code={joinCode ?? ""} />
           : organizerId ? <Organizer pollId={organizerId} account={account} retryAccount={retry} onSignedOut={signedOut} />
           : sessionPage ? (
             <section className="shell py-9 wrap-anywhere sm:py-14">

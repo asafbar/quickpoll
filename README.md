@@ -25,3 +25,24 @@ lsof -nP -iTCP:3001 -iTCP:5173 -sTCP:LISTEN
 ```
 
 Stop the existing service through the terminal or app that started it, then rerun `./dev.sh`. If Compose reports a conflict on port 5434, identify the listener with `lsof -nP -iTCP:5434 -sTCP:LISTEN` and resolve it before retrying.
+
+## Local screenshot data
+
+The seeder copies a draft or completed four-question session into a separate completed session for the same organizer. It copies the existing question and answer text in order and adds 64 fictional participants and 227 votes. The original session, its participants, and its votes are left intact.
+
+Start the local Compose database and apply migrations 001–005 separately. To find the source and owner IDs, match the session to your own organizer account.
+
+```sh
+docker compose exec -T db psql -X -U quickpoll -d quickpoll -c 'SELECT id, organizer_id, title, status FROM poll_sessions ORDER BY id'
+```
+
+From the project root, substitute your IDs for `SESSION_ID` and `OWNER_ID`. Preview first, then explicitly confirm the write.
+
+```sh
+node server/scripts/seed-demo.js --create-demo-session --source-session-id SESSION_ID --owner-id OWNER_ID --dry-run
+node server/scripts/seed-demo.js --create-demo-session --source-session-id SESSION_ID --owner-id OWNER_ID --confirm
+```
+
+The script accepts only the local PostgreSQL 18 Compose configuration from `server/.env` and the corresponding environment variables. The database and role must be `quickpoll` on loopback port 5434. Production mode and a schema mismatch are rejected. The preview is read-only. A successful write prints the organizer, presentation, and summary paths, plus the vote counts. The generated participants are for screenshots and have no usable login credentials.
+
+A generated title ends in `· Demo #<source ID>`. Keep that marker so reruns can detect the existing clone. The seeder refuses to create a second clone for the same source and owner. It has no cleanup or overwrite mode.

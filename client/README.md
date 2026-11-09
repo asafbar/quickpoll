@@ -10,7 +10,7 @@ Open the Vite URL. Development and preview proxy `/api` and `/socket.io` to the 
 
 Register and sign in to save new polls to your account. Open **My Polls** to manage them on another device. Account sessions use a server-managed HttpOnly cookie. Anonymous and older polls still use their original tab-specific organizer access and are not added to your account automatically.
 
-Open **My Sessions** to prepare multi-question drafts. For the example workshop, select **Use demo title** on the create form, then **Use demo question** and **Save question** for each of the four questions. The demo buttons fill the form. Nothing is saved until you submit.
+Open **My Sessions** to prepare and run a multi-question session. Add your questions in order, start the session to allow joining, then open and close each question. Open the public session presentation for a stable join QR and live results. Participants keep their session access when refreshing the same tab, and the final summary is available after the last question closes. Vote totals are shown per question. The API does not provide a count of joined participants.
 
 Participants can join without an account and submit one vote while a poll is active. The tab remembers server-confirmed votes. Without a saved receipt, the server checks for duplicates on submission. Organizers receive live result updates and can refresh manually as a fallback.
 
