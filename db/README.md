@@ -1,6 +1,6 @@
 # QuickPoll database migrations
 
-For a fresh database, apply migrations 001 through 004 in order. On an existing database, apply only migrations that have not been applied. Run the commands from the repository root with the Compose `db` service running.
+For a fresh database, apply migrations 001 through 005 in order. On an existing database, apply only migrations that have not been applied. Run the commands from the repository root with the Compose `db` service running.
 
 ```sh
 docker compose exec -T db psql -X -v ON_ERROR_STOP=1 -U quickpoll -d quickpoll -f - < db/002_organizer_auth.sql
@@ -29,3 +29,13 @@ docker compose exec -T db psql -X -v ON_ERROR_STOP=1 -U quickpoll -d quickpoll -
 ```
 
 Migration 004 adds poll sessions, nullable question membership, and a session participant table in one transaction. Existing polls remain standalone. Their questions, organizer credentials, options, participants, and votes are preserved.
+
+## Live session voting
+
+With migrations 001 through 004 already applied, run this once from the repository root before serving live session requests.
+
+```sh
+docker compose exec -T db psql -X -v ON_ERROR_STOP=1 -U quickpoll -d quickpoll -f - < db/005_live_sessions.sql
+```
+
+Migration 005 converts any existing session participant UUIDs to SHA-256 hashes and adds an optional session identity to per-poll participant records. It preserves existing sessions and their questions, standalone participants, and votes. New session votes use the existing votes table.

@@ -166,6 +166,10 @@ async function getResults(joinCode) {
     throw new ResultsUnavailableError("Results are unavailable while the poll is a draft");
   }
 
+  return formatPollResults(poll);
+}
+
+function formatPollResults(poll) {
   const totalVotes = poll.options.reduce((total, option) => total + option.voteCount, 0);
   const options = poll.options.map((option) => ({
     ...option,
@@ -177,6 +181,7 @@ async function getResults(joinCode) {
 module.exports = {
   createPoll, getPollByCode, joinPoll, changePollStatus, castVote, getResults, listOrganizerPolls,
   isJoinCode, isPositiveBigintId, validateText, validatePollInput, generateJoinCode, MAX_JOIN_CODE_ATTEMPTS, pollEvents,
+  formatPollResults,
   InvalidPollError, PollNotActiveError, OrganizerForbiddenError, PollTransitionError,
   ParticipantForbiddenError, DuplicateVoteError, ResultsUnavailableError,
 };

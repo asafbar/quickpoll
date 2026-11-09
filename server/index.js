@@ -16,6 +16,7 @@ const organizerRoutes = require("./src/routes/organizer");
 const { publicSessions } = require("./src/routes/sessions");
 const pollRoutes = require("./src/routes/polls");
 const { attachPollSockets } = require("./src/sockets/polls");
+const { attachSessionSockets } = require("./src/sockets/sessions");
 
 app.use(cors(corsOptions));
 app.use("/api/auth", authRoutes);
@@ -30,6 +31,7 @@ const io = new Server(httpServer, {
   },
 });
 attachPollSockets(io);
+attachSessionSockets(io);
 
 app.get("/api/health", (req, res) => {
   res.json({

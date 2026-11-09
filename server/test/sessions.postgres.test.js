@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const { randomBytes, randomUUID } = require("node:crypto");
 const { once } = require("node:events");
 const { readFile } = require("node:fs/promises");
+const { setTimeout: delay } = require("node:timers/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const express = require("express");
@@ -12,6 +13,7 @@ const { publicSessions } = require("../src/routes/sessions");
 const pollRoutes = require("../src/routes/polls");
 const organizerRoutes = require("../src/routes/organizer");
 const { appendQuestion } = require("../src/repositories/sessions");
+const { sessionEvents } = require("../src/services/liveSessions");
 
 const connectionString = process.env.QUICKPOLL_TEST_DATABASE_URL;
 
@@ -126,7 +128,7 @@ test("PostgreSQL enforces session ownership, ordered concurrent writes, and ques
 
   const publicPath = "/api/sessions/code/" + joinCode;
   assert.deepEqual((await request(publicPath)).body, {
-    session: { title: "Workshop", joinCode, status: "draft", activeQuestionId: null },
+    session: { title: "Workshop", joinCode, status: "draft", activeQuestionId: null, currentQuestion: null },
   });
   assert.equal((await request("/api/sessions/code/UNKNOWN")).status, 404);
   const insertPoll = "INSERT INTO polls (join_code, question, organizer_id, session_id, session_position) VALUES ($1, 'Constraint check', $2, $3, $4)";
@@ -158,4 +160,140 @@ test("PostgreSQL enforces session ownership, ordered concurrent writes, and ques
   const voter = (await request(publicPollPath + "/join", { body: { displayName: "Pat" } })).body;
   assert.equal((await request(publicPollPath + "/vote", { bearer: voter.participantToken, body: { optionId: standalonePoll.options[0].id } })).status, 201);
   assert.equal((await request(publicPollPath + "/results")).body.totalVotes, 1);
+
+  await migrate("005_live_sessions");
+  assert.equal((await request(publicPollPath + "/results")).body.totalVotes, 1);
+  assert.equal((await request("/api/polls/code/LEGACY/results")).body.totalVotes, 1);
+  assert.equal((await database.query("SELECT 1 FROM session_participants WHERE participant_token_hash = sha256(convert_to($1, 'UTF8'))", [participant])).rowCount, 1);
+  assert.equal((await request(detailsPath, { cookie: aliceCookie })).body.session.questions.length, 6);
+
+  const emitted = [];
+  for (const name of ["session-state-updated", "session-results-updated", "session-completed"]) {
+    const listener = (payload) => emitted.push([name, payload]);
+    sessionEvents.on(name, listener);
+    t.after(() => sessionEvents.off(name, listener));
+  }
+  const newSession = async (title, cookie) =>
+    (await request(organizerPath, { cookie, body: { title } })).body.session;
+  const live = await newSession("Live workshop", aliceCookie);
+  const liveOwnerPath = organizerPath + "/" + live.id;
+  const livePath = "/api/sessions/code/" + live.joinCode;
+  const action = (name, questionId, cookie = aliceCookie, origin) =>
+    request(liveOwnerPath + (questionId ? "/questions/" + questionId : "") + "/" + name, { method: "POST", cookie, origin });
+  const add = async (question) =>
+    (await request(liveOwnerPath + "/questions", { cookie: aliceCookie, body: { question, options: ["A", "B"] } })).body.question;
+  const join = (name) => request(livePath + "/join", { body: { displayName: name } });
+  const questionPath = (question) => livePath + "/questions/" + question.id;
+  const vote = (question, optionId, bearer) => request(questionPath(question) + "/vote", { bearer, body: { optionId } });
+
+  assert.equal((await request(liveOwnerPath + "/start", { method: "POST" })).status, 401);
+  assert.equal((await action("start", null, bobCookie)).status, 404);
+  assert.equal((await action("start", null, aliceCookie, "https://untrusted.test")).status, 403);
+  assert.equal((await action("start")).body.code, "CANNOT_START");
+  assert.equal((await join("Pat")).status, 409);
+  const one = await add("First live question");
+  const two = await add("Second live question");
+  const three = await add("Third live question");
+  assert.equal((await action("open", one.id)).status, 409);
+  assert.equal(emitted.length, 0);
+
+  const start = await Promise.all([action("start"), action("start")]);
+  assert.deepEqual(start.map(({ status }) => status).sort(), [200, 409]);
+  assert.equal((await request(livePath)).body.session.currentQuestion, null);
+  const pat = (await join(" Pat ")).body;
+  assert.match(pat.participantToken, /^[A-Za-z0-9_-]{43}$/);
+  const { rows: [savedParticipant] } = await database.query("SELECT display_name, participant_token_hash FROM session_participants WHERE id = $1", [pat.participantId]);
+  assert.equal(savedParticipant.display_name, "Pat");
+  assert.equal(savedParticipant.participant_token_hash.toString("hex"),
+    require("node:crypto").createHash("sha256").update(pat.participantToken).digest("hex"));
+  assert.equal((await action("open", two.id)).status, 409);
+  assert.equal((await action("open", one.id)).status, 200);
+  assert.equal((await action("open", two.id)).status, 409);
+  assert.equal((await request(questionPath(one))).status, 401);
+  assert.equal((await request(questionPath(one), { bearer: randomBytes(32).toString("base64url") })).status, 403);
+  assert.equal((await request(questionPath(two), { bearer: pat.participantToken })).status, 409);
+  assert.equal((await request(questionPath(two) + "/results")).status, 409);
+  const state = (await request(livePath)).body.session;
+  assert.deepEqual(state.currentQuestion, { id: one.id, question: one.question, status: "active", position: 1 });
+  assert.equal(state.activeQuestionId, one.id);
+  assert.equal((await request(questionPath(one), { bearer: pat.participantToken })).body.question.hasVoted, false);
+  assert.equal((await vote(one, two.options[0].id, pat.participantToken)).body.code, "INVALID_OPTION");
+  assert.equal((await vote({ id: first.id }, first.options[0].id, pat.participantToken)).status, 404);
+
+  const otherSession = await newSession("Other", bobCookie);
+  const otherId = organizerPath + "/" + otherSession.id;
+  await request(otherId + "/questions", { cookie: bobCookie, body: { question: "Other", options: ["A", "B"] } });
+  await request(otherId + "/start", { cookie: bobCookie, method: "POST" });
+  const outsider = (await request("/api/sessions/code/" + otherSession.joinCode + "/join", { body: { displayName: "Outsider" } })).body;
+  assert.equal((await vote(one, one.options[0].id, outsider.participantToken)).status, 403);
+  const duplicateVotes = await Promise.all([vote(one, one.options[0].id, pat.participantToken), vote(one, one.options[1].id, pat.participantToken)]);
+  assert.deepEqual(duplicateVotes.map(({ status }) => status).sort(), [201, 409]);
+  assert.equal(duplicateVotes.find(({ status }) => status === 409).body.code, "ALREADY_VOTED");
+  assert.equal((await request(questionPath(one), { bearer: pat.participantToken })).body.question.hasVoted, true);
+  assert.equal((await request(questionPath(one) + "/results")).body.results.totalVotes, 1);
+  assert.equal((await request(livePath + "/summary")).body.summary.questions.length, 0);
+  assert.equal((await action("close", one.id)).status, 200);
+  const review = (await request(livePath)).body.session;
+  assert.equal(review.status, "active");
+  assert.equal(review.activeQuestionId, null);
+  assert.equal(review.currentQuestion.status, "closed");
+  assert.equal((await request(livePath + "/summary")).body.summary.questions[0].totalVotes, 1);
+  assert.equal((await action("open", one.id)).status, 409);
+  assert.equal((await join("Late")).status, 201);
+
+  async function waitForBlocked(pattern) {
+    for (let attempt = 0; attempt < 150; attempt++) {
+      const { rowCount } = await database.query(
+        "SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE $1",
+        [pattern],
+      );
+      if (rowCount) return;
+      await delay(10);
+    }
+    assert.fail("Expected a blocked SQL statement");
+  }
+
+  await action("open", two.id);
+  const voteGate = await database.connect();
+  try {
+    await voteGate.query("BEGIN");
+    await voteGate.query("LOCK TABLE votes IN SHARE MODE");
+    const inFlightVote = vote(two, two.options[0].id, pat.participantToken);
+    await waitForBlocked("INSERT INTO votes (poll_id, participant_id, option_id)%");
+    const close = action("close", two.id);
+    await waitForBlocked("SELECT id, status FROM poll_sessions WHERE id = $1 AND organizer_id = $2 FOR UPDATE%");
+    await voteGate.query("COMMIT");
+    assert.deepEqual((await Promise.all([inFlightVote, close])).map(({ status }) => status), [201, 200]);
+  } finally {
+    await voteGate.query("ROLLBACK");
+    voteGate.release();
+  }
+
+  await action("open", three.id);
+  const closeGate = await database.connect();
+  try {
+    await closeGate.query("BEGIN");
+    await closeGate.query("LOCK TABLE polls IN SHARE MODE");
+    const close = action("close", three.id);
+    await waitForBlocked("UPDATE polls SET status = $1 WHERE id = $2%");
+    const inFlightVote = vote(three, three.options[0].id, pat.participantToken);
+    await waitForBlocked("SELECT id, status FROM poll_sessions WHERE join_code = $1 FOR SHARE%");
+    await closeGate.query("COMMIT");
+    const [closed, rejected] = await Promise.all([close, inFlightVote]);
+    assert.equal(closed.body.status, "closed");
+    assert.equal(rejected.body.code, "QUESTION_NOT_ACTIVE");
+  } finally {
+    await closeGate.query("ROLLBACK");
+    closeGate.release();
+  }
+  const summary = (await request(livePath + "/summary")).body.summary;
+  assert.deepEqual(summary.questions.map(({ position, totalVotes }) => [position, totalVotes]), [[1, 1], [2, 1], [3, 0]]);
+  assert.equal(summary.status, "closed");
+  assert.equal((await join("Too late")).status, 409);
+  assert.equal((await action("close", three.id)).status, 409);
+  assert.deepEqual(emitted.filter(([name]) => name === "session-results-updated"), [
+    ["session-results-updated", { sessionId: live.id, questionId: one.id }],
+    ["session-results-updated", { sessionId: live.id, questionId: two.id }],
+  ]);
+  assert.deepEqual(emitted.filter(([name]) => name === "session-completed"), [["session-completed", { sessionId: live.id }]]);
 });

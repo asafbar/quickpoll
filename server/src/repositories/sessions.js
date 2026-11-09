@@ -48,10 +48,18 @@ async function findOwnedSession(organizerId, sessionId) {
 
 async function findPublicSession(joinCode) {
   const { rows: [session] } = await pool.query(
-    `SELECT s.title, s.join_code AS "joinCode", s.status, ${activeQuestion}
+    `SELECT s.title, s.join_code AS "joinCode", s.status, ${activeQuestion},
+       (SELECT json_build_object('id', p.id::text, 'question', p.question, 'status', p.status, 'position', p.session_position)
+        FROM polls p WHERE p.session_id = s.id AND p.status IN ('active', 'closed')
+        ORDER BY p.session_position DESC LIMIT 1) AS "currentQuestion"
      FROM poll_sessions s WHERE s.join_code = $1`,
     [joinCode],
   );
+  return session ?? null;
+}
+
+async function findSessionRoom(joinCode) {
+  const { rows: [session] } = await pool.query("SELECT id FROM poll_sessions WHERE join_code = $1", [joinCode]);
   return session ?? null;
 }
 
@@ -104,4 +112,4 @@ async function appendQuestion({ organizerId, sessionId, joinCode, question, opti
   }
 }
 
-module.exports = { insertSession, findOwnedSessions, findOwnedSession, findPublicSession, appendQuestion };
+module.exports = { insertSession, findOwnedSessions, findOwnedSession, findPublicSession, findSessionRoom, appendQuestion };

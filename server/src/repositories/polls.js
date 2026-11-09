@@ -136,25 +136,23 @@ async function insertVote({ joinCode, participantToken, optionId }) {
   return result ?? null;
 }
 
+// Used with a poll aliased as p. Include options that have no votes.
+const resultOptions = `COALESCE((
+  SELECT json_agg(json_build_object('id', o.id::text, 'text', o.option_text, 'voteCount', o.vote_count)
+                  ORDER BY o.display_order)
+  FROM (
+    SELECT o.id, o.option_text, o.display_order, count(v.option_id) AS vote_count
+    FROM poll_options o
+    LEFT JOIN votes v ON v.poll_id = o.poll_id AND v.option_id = o.id
+    WHERE o.poll_id = p.id AND p.status <> 'draft'
+    GROUP BY o.id
+  ) o
+), '[]'::json) AS options`;
+
 async function findResultsByCode(joinCode) {
   const { rows: [poll] } = await pool.query(
-    `SELECT p.id, p.question, p.status,
-            COALESCE(
-              json_agg(json_build_object('id', o.id::text, 'text', o.option_text,
-                                         'voteCount', o.vote_count)
-                       ORDER BY o.display_order) FILTER (WHERE o.id IS NOT NULL),
-              '[]'::json
-            ) AS options
-     FROM polls p
-     LEFT JOIN LATERAL (
-       SELECT o.id, o.option_text, o.display_order, count(v.option_id) AS vote_count
-       FROM poll_options o
-       LEFT JOIN votes v ON v.poll_id = o.poll_id AND v.option_id = o.id
-       WHERE o.poll_id = p.id AND p.status <> 'draft'
-       GROUP BY o.id
-     ) o ON true
-     WHERE p.join_code = $1 AND p.session_id IS NULL
-     GROUP BY p.id`,
+    `SELECT p.id, p.question, p.status, ${resultOptions}
+     FROM polls p WHERE p.join_code = $1 AND p.session_id IS NULL`,
     [joinCode],
   );
   return poll ?? null;
@@ -162,5 +160,5 @@ async function findResultsByCode(joinCode) {
 
 module.exports = {
   insertDraft, findPublicByCode, insertParticipant, findLifecycleById, updatePollStatus,
-  insertVote, findResultsByCode, findOwnedPolls, insertPollOptions,
+  insertVote, findResultsByCode, findOwnedPolls, insertPollOptions, resultOptions,
 };
