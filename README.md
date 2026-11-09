@@ -4,28 +4,29 @@ QuickPoll is a real-time polling app for workshops, classes, and team meetings. 
 
 ## Screenshots
 
-![QuickPoll home page with options to create or join a poll](docs/screenshots/01-home.png)
+### Home
 
-| Organizer dashboard | Mobile participant view |
-| --- | --- |
-| [![My Sessions dashboard](docs/screenshots/02-my-sessions.png)](docs/screenshots/02-my-sessions.png) | [![Mobile session join form](docs/screenshots/04-participant-join.png)](docs/screenshots/04-participant-join.png) |
+<a href="docs/screenshots/01-home.png"><img src="docs/screenshots/01-home.png" width="760" alt="QuickPoll home page with options to create or join a poll"></a>
 
-<details>
-<summary>Session builder, live presentation, and final results</summary>
+### Live Presentation
 
-**Session builder**
+<a href="docs/screenshots/05-live-presentation.png"><img src="docs/screenshots/05-live-presentation.png" width="760" alt="Live presentation showing the join QR code and vote totals"></a>
 
-![Organizer session builder with ordered questions](docs/screenshots/03-session-builder.png)
+### Session Results
 
-**Live presentation**
+<a href="docs/screenshots/06-session-results.png"><img src="docs/screenshots/06-session-results.png" width="720" alt="Completed session summary with results for each question"></a>
 
-![Live presentation showing the join QR code and vote totals](docs/screenshots/05-live-presentation.png)
+### My Sessions
 
-**Final results**
+<a href="docs/screenshots/02-my-sessions.png"><img src="docs/screenshots/02-my-sessions.png" width="680" alt="Organizer dashboard listing sessions and their statuses"></a>
 
-![Completed session summary with results for each question](docs/screenshots/06-session-results.png)
+### Session Builder
 
-</details>
+<a href="docs/screenshots/03-session-builder.png"><img src="docs/screenshots/03-session-builder.png" width="440" alt="Organizer session builder with ordered questions"></a>
+
+### Participant Join
+
+<a href="docs/screenshots/04-participant-join.png"><img src="docs/screenshots/04-participant-join.png" width="240" alt="Portrait mobile view of the session join form"></a>
 
 ## How it works
 
