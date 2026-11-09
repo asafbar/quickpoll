@@ -1,6 +1,6 @@
 # QuickPoll database migrations
 
-For a fresh database, apply `001_init.sql`, `002_organizer_auth.sql`, then `003_organizer_accounts.sql`. On an existing database, apply only migrations that have not been applied. Run the commands from the repository root with the Compose `db` service running.
+For a fresh database, apply migrations 001 through 004 in order. On an existing database, apply only migrations that have not been applied. Run the commands from the repository root with the Compose `db` service running.
 
 ```sh
 docker compose exec -T db psql -X -v ON_ERROR_STOP=1 -U quickpoll -d quickpoll -f - < db/002_organizer_auth.sql
@@ -19,3 +19,13 @@ docker compose exec -T db psql -X -v ON_ERROR_STOP=1 -U quickpoll -d quickpoll -
 ```
 
 Apply migration 003 once. It creates the organizer and session tables and adds nullable poll ownership in a single transaction. Existing polls remain unowned, with their organizer token hashes, questions, statuses, and associated data intact.
+
+## Multi-question poll sessions
+
+With migrations 001 through 003 already applied, run the following once before starting the updated API.
+
+```sh
+docker compose exec -T db psql -X -v ON_ERROR_STOP=1 -U quickpoll -d quickpoll -f - < db/004_multi_question_sessions.sql
+```
+
+Migration 004 adds poll sessions, nullable question membership, and a session participant table in one transaction. Existing polls remain standalone. Their questions, organizer credentials, options, participants, and votes are preserved.

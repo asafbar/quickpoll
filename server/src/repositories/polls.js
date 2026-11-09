@@ -1,5 +1,15 @@
 const pool = require("../config/db");
 
+function insertPollOptions(client, pollId, options) {
+  return client.query(
+    `INSERT INTO poll_options (poll_id, option_text, display_order)
+     SELECT $1, option_text, display_order::integer
+     FROM unnest($2::text[]) WITH ORDINALITY AS options(option_text, display_order)
+     RETURNING id, option_text AS text, display_order`,
+    [pollId, options],
+  );
+}
+
 async function insertDraft({ joinCode, question, options, organizerTokenHash, organizerId }) {
   const client = await pool.connect();
   let rollbackError;
@@ -20,12 +30,7 @@ async function insertDraft({ joinCode, question, options, organizerTokenHash, or
       return null;
     }
 
-    await client.query(
-      `INSERT INTO poll_options (poll_id, option_text, display_order)
-       SELECT $1, option_text, display_order::integer
-       FROM unnest($2::text[]) WITH ORDINALITY AS options(option_text, display_order)`,
-      [poll.id, options],
-    );
+    await insertPollOptions(client, poll.id, options);
 
     await client.query("COMMIT");
     return { ...poll, options };
@@ -51,7 +56,7 @@ async function findPublicByCode(joinCode) {
             ) AS options
      FROM polls p
      LEFT JOIN poll_options o ON o.poll_id = p.id
-     WHERE p.join_code = $1
+     WHERE p.join_code = $1 AND p.session_id IS NULL
      GROUP BY p.id`,
     [joinCode],
   );
@@ -62,7 +67,7 @@ async function insertParticipant({ joinCode, displayName, participantToken }) {
   // The shared row lock lets joins run concurrently and serializes them with status updates.
   const { rows: [result] } = await pool.query(
     `WITH matched_poll AS (
-       SELECT id, status FROM polls WHERE join_code = $1 FOR SHARE
+       SELECT id, status FROM polls WHERE join_code = $1 AND session_id IS NULL FOR SHARE
      ), participant AS (
        INSERT INTO participants (poll_id, display_name, participant_token)
        SELECT id, $2, $3 FROM matched_poll WHERE status = 'active'
@@ -77,7 +82,7 @@ async function insertParticipant({ joinCode, displayName, participantToken }) {
 
 async function findLifecycleById(id) {
   const { rows: [poll] } = await pool.query(
-    'SELECT status, organizer_token_hash AS "organizerTokenHash", organizer_id AS "organizerId" FROM polls WHERE id = $1',
+    'SELECT status, organizer_token_hash AS "organizerTokenHash", organizer_id AS "organizerId" FROM polls WHERE id = $1 AND session_id IS NULL',
     [id],
   );
   return poll ?? null;
@@ -88,7 +93,7 @@ async function updatePollStatus({ id, previousStatus, nextStatus, organizerToken
   const authorization = organizerId ? "organizer_id = $4" : "organizer_token_hash = $4";
   const { rows: [poll] } = await pool.query(
     `UPDATE polls SET status = $1
-     WHERE id = $2 AND status = $3 AND ${authorization}
+     WHERE id = $2 AND status = $3 AND ${authorization} AND session_id IS NULL
      RETURNING id, status`,
     [nextStatus, id, previousStatus, organizerId ?? organizerTokenHash],
   );
@@ -98,7 +103,7 @@ async function updatePollStatus({ id, previousStatus, nextStatus, organizerToken
 async function findOwnedPolls(organizerId) {
   const { rows } = await pool.query(
     `SELECT id, join_code AS "joinCode", question, status, created_at AS "createdAt"
-     FROM polls WHERE organizer_id = $1 ORDER BY id DESC`,
+     FROM polls WHERE organizer_id = $1 AND session_id IS NULL ORDER BY id DESC`,
     [organizerId],
   );
   return rows;
@@ -108,7 +113,7 @@ async function insertVote({ joinCode, participantToken, optionId }) {
   // The shared lock keeps the poll active until this statement commits, while allowing other votes.
   const { rows: [result] } = await pool.query(
     `WITH matched_poll AS (
-       SELECT id, status FROM polls WHERE join_code = $1 FOR SHARE
+       SELECT id, status FROM polls WHERE join_code = $1 AND session_id IS NULL FOR SHARE
      ), ballot AS (
        SELECT p.id AS poll_id, p.status, participant.id AS participant_id, o.id AS option_id
        FROM matched_poll p
@@ -148,7 +153,7 @@ async function findResultsByCode(joinCode) {
        WHERE o.poll_id = p.id AND p.status <> 'draft'
        GROUP BY o.id
      ) o ON true
-     WHERE p.join_code = $1
+     WHERE p.join_code = $1 AND p.session_id IS NULL
      GROUP BY p.id`,
     [joinCode],
   );
@@ -157,5 +162,5 @@ async function findResultsByCode(joinCode) {
 
 module.exports = {
   insertDraft, findPublicByCode, insertParticipant, findLifecycleById, updatePollStatus,
-  insertVote, findResultsByCode, findOwnedPolls,
+  insertVote, findResultsByCode, findOwnedPolls, insertPollOptions,
 };

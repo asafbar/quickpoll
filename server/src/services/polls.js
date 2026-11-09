@@ -38,7 +38,7 @@ function validateText(value, maxLength, message) {
   return text;
 }
 
-async function createPoll(input, organizerId = null) {
+function validatePollInput(input) {
   const question = validateText(
     input?.question,
     300,
@@ -56,11 +56,19 @@ async function createPoll(input, organizerId = null) {
   if (new Set(options).size !== options.length) {
     throw new InvalidPollError("Options must be distinct");
   }
+  return { question, options };
+}
 
+function generateJoinCode() {
+  return randomBytes(5).toString("hex").toUpperCase();
+}
+
+async function createPoll(input, organizerId = null) {
+  const { question, options } = validatePollInput(input);
   const organizerToken = randomBytes(32).toString("base64url");
   const organizerTokenHash = hashOrganizerToken(organizerToken);
   for (let attempt = 0; attempt < MAX_JOIN_CODE_ATTEMPTS; attempt += 1) {
-    const joinCode = randomBytes(5).toString("hex").toUpperCase();
+    const joinCode = generateJoinCode();
     const poll = await pollRepository.insertDraft({ joinCode, question, options, organizerTokenHash, organizerId });
     if (poll) return { ...poll, organizerToken };
   }
@@ -168,7 +176,7 @@ async function getResults(joinCode) {
 
 module.exports = {
   createPoll, getPollByCode, joinPoll, changePollStatus, castVote, getResults, listOrganizerPolls,
-  isJoinCode, pollEvents,
+  isJoinCode, isPositiveBigintId, validateText, validatePollInput, generateJoinCode, MAX_JOIN_CODE_ATTEMPTS, pollEvents,
   InvalidPollError, PollNotActiveError, OrganizerForbiddenError, PollTransitionError,
   ParticipantForbiddenError, DuplicateVoteError, ResultsUnavailableError,
 };
