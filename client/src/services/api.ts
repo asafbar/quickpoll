@@ -49,6 +49,25 @@ export interface OwnedPoll extends Omit<PublicPoll, "options"> {
   createdAt: string;
 }
 
+export interface OwnedSession {
+  id: string;
+  title: string;
+  joinCode: string;
+  status: PollStatus;
+  createdAt: string;
+  updatedAt: string;
+  activeQuestionId: string | null;
+  questionCount?: number;
+}
+
+export interface SessionQuestion extends PublicPoll {
+  position: number;
+}
+
+export interface SessionDetails extends OwnedSession {
+  questions: SessionQuestion[];
+}
+
 const apiBase = (import.meta.env.VITE_API_BASE_URL || "/api").replace(/\/$/, "");
 export const apiOrigin = new URL(apiBase, window.location.origin).origin;
 
@@ -146,4 +165,26 @@ export function getCurrentOrganizer() {
 
 export function getOwnedPolls(signal?: AbortSignal) {
   return request<{ polls: OwnedPoll[] }>("/organizer/polls", { credentials: "include", signal });
+}
+
+const sessionsPath = "/organizer/sessions";
+
+export function getOwnedSessions(signal: AbortSignal) {
+  return request<{ sessions: OwnedSession[] }>(sessionsPath, { credentials: "include", signal });
+}
+
+export function createSession(title: string) {
+  return postJson<{ session: OwnedSession }>(sessionsPath, { title }, undefined, "include");
+}
+
+function sessionPath(id: string) {
+  return sessionsPath + "/" + encodeURIComponent(id);
+}
+
+export function getSessionDetails(id: string, signal: AbortSignal) {
+  return request<{ session: SessionDetails }>(sessionPath(id), { credentials: "include", signal });
+}
+
+export function addSessionQuestion(id: string, input: CreatePollInput) {
+  return postJson<{ question: SessionQuestion }>(sessionPath(id) + "/questions", input, undefined, "include");
 }

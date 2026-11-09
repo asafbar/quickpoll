@@ -10,6 +10,9 @@ import { JoinPoll } from "./features/polls/JoinPoll";
 import { MyPolls } from "./features/polls/MyPolls";
 import { Organizer } from "./features/polls/Organizer";
 import { Presentation } from "./features/polls/Presentation";
+import { CreateSession } from "./features/sessions/CreateSession";
+import { MySessions } from "./features/sessions/MySessions";
+import { SessionBuilder } from "./features/sessions/SessionBuilder";
 import { getServerHealth } from "./services/api";
 
 function Footer() {
@@ -41,6 +44,8 @@ function Footer() {
 function App() {
   const path = window.location.pathname.replace(/\/+$/, "") || "/";
   const organizerId = /^\/organizer\/([1-9][0-9]{0,18})$/.exec(path)?.[1];
+  const sessionId = /^\/sessions\/([1-9][0-9]{0,18})$/.exec(path)?.[1];
+  const sessionPage = path === "/my-sessions" || path === "/sessions/new" || !!sessionId;
   const joinCode = new URLSearchParams(window.location.search).get("code")?.trim();
   const createActive = path === "/create" || !!organizerId;
   const joinActive = path === "/join";
@@ -83,6 +88,8 @@ function App() {
               <>
                 <a className={navClass + (path === "/my-polls" ? " bg-accent-soft text-accent-bright" : " text-muted")}
                   href="/my-polls" aria-current={path === "/my-polls" ? "page" : undefined}>My Polls</a>
+                <a className={navClass + (sessionPage ? " bg-accent-soft text-accent-bright" : " text-muted")}
+                  href="/my-sessions" aria-current={path === "/my-sessions" ? "page" : undefined}>My Sessions</a>
                 <button type="button" className={navClass + " text-muted disabled:opacity-60"}
                   disabled={leaving} onClick={() => void signOut()}>{leaving ? "Logging out…" : "Logout"}</button>
               </>
@@ -101,6 +108,16 @@ function App() {
           : path === "/create" ? <CreatePoll account={account} retryAccount={retry} onSignedOut={signedOut} />
           : path === "/join" ? <JoinPoll joinCode={joinCode} />
           : organizerId ? <Organizer pollId={organizerId} account={account} retryAccount={retry} onSignedOut={signedOut} />
+          : sessionPage ? (
+            <section className="shell py-9 wrap-anywhere sm:py-14">
+              {!signedIn && <PageIntro label="Organizer account" title="My Sessions">Sign in to prepare your sessions.</PageIntro>}
+              <AccountGate account={account} retry={retry} description="Use your organizer account to create and manage sessions.">
+                {sessionId ? <SessionBuilder id={sessionId} onSignedOut={signedOut} />
+                  : path === "/sessions/new" ? <CreateSession onSignedOut={signedOut} />
+                  : <MySessions onSignedOut={signedOut} />}
+              </AccountGate>
+            </section>
+          )
           : path === "/my-polls" ? (account.status === "signed-in"
             ? <MyPolls key={account.organizer.id} onSignedOut={signedOut} />
             : <section className="shell py-9 sm:py-14">
