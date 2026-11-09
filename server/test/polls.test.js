@@ -78,7 +78,7 @@ test("trims input and creates a draft with ordered options in one transaction", 
   assert.equal(statements.length, 4);
   assert.equal(statements[0].sql, "BEGIN");
   assert.deepEqual(statements[1].params, [
-    response.body.joinCode, question, createHash("sha256").update(organizerToken).digest(),
+    response.body.joinCode, question, createHash("sha256").update(organizerToken).digest(), null,
   ]);
   assert.match(statements[2].sql, /WITH ORDINALITY/);
   assert.deepEqual(statements[2].params, [response.body.id, options]);

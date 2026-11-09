@@ -6,7 +6,7 @@ function bearerToken(req) {
 
 async function createPoll(req, res) {
   try {
-    const poll = await pollService.createPoll(req.body);
+    const poll = await pollService.createPoll(req.body, req.organizer?.id);
     if (!poll) {
       return res.status(503).json({
         status: "error",
@@ -63,7 +63,8 @@ async function joinPoll(req, res) {
 function changePollStatus(nextStatus) {
   return async (req, res) => {
     const token = bearerToken(req);
-    if (!token) {
+    const organizerId = req.organizer?.id;
+    if (!token && !organizerId) {
       return res.set("WWW-Authenticate", "Bearer").status(401).json({
         status: "error",
         message: "Organizer bearer token required",
@@ -71,7 +72,7 @@ function changePollStatus(nextStatus) {
     }
 
     try {
-      const poll = await pollService.changePollStatus(req.params.id, token, nextStatus);
+      const poll = await pollService.changePollStatus(req.params.id, token, nextStatus, organizerId);
       if (!poll) {
         return res.status(404).json({ status: "error", message: "Poll not found" });
       }
@@ -133,6 +134,15 @@ async function getResults(req, res) {
   }
 }
 
+async function listOrganizerPolls(req, res) {
+  try {
+    res.json({ polls: await pollService.listOrganizerPolls(req.organizer.id) });
+  } catch (error) {
+    console.error("Organizer poll listing failed:", error.code);
+    res.status(500).json({ status: "error", message: "Could not list organizer polls" });
+  }
+}
+
 module.exports = {
   createPoll,
   getPollByCode,
@@ -141,4 +151,5 @@ module.exports = {
   closePoll: changePollStatus("closed"),
   castVote,
   getResults,
+  listOrganizerPolls,
 };

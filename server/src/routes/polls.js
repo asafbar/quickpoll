@@ -2,6 +2,7 @@ const express = require("express");
 const {
   createPoll, getPollByCode, joinPoll, activatePoll, closePoll, castVote, getResults,
 } = require("../controllers/polls");
+const { optionalOrganizerWrite, lifecycleOrganizer } = require("../middleware/organizerAuth");
 
 const router = express.Router();
 const bodyErrors = {
@@ -23,12 +24,12 @@ function handleBodyError(fallbackMessage) {
 }
 
 const parseJson = express.json();
-router.post("/", parseJson, createPoll, handleBodyError("Could not create poll"));
+router.post("/", optionalOrganizerWrite, parseJson, createPoll, handleBodyError("Could not create poll"));
 router.get("/code/:joinCode", getPollByCode);
 router.post("/code/:joinCode/join", parseJson, joinPoll, handleBodyError("Could not join poll"));
 router.post("/code/:joinCode/vote", parseJson, castVote, handleBodyError("Could not record vote"));
 router.get("/code/:joinCode/results", getResults);
-router.post("/:id/activate", activatePoll);
-router.post("/:id/close", closePoll);
+router.post("/:id/activate", lifecycleOrganizer, activatePoll);
+router.post("/:id/close", lifecycleOrganizer, closePoll);
 
 module.exports = router;

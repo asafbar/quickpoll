@@ -38,7 +38,7 @@ function validateText(value, maxLength, message) {
   return text;
 }
 
-async function createPoll(input) {
+async function createPoll(input, organizerId = null) {
   const question = validateText(
     input?.question,
     300,
@@ -61,7 +61,7 @@ async function createPoll(input) {
   const organizerTokenHash = hashOrganizerToken(organizerToken);
   for (let attempt = 0; attempt < MAX_JOIN_CODE_ATTEMPTS; attempt += 1) {
     const joinCode = randomBytes(5).toString("hex").toUpperCase();
-    const poll = await pollRepository.insertDraft({ joinCode, question, options, organizerTokenHash });
+    const poll = await pollRepository.insertDraft({ joinCode, question, options, organizerTokenHash, organizerId });
     if (poll) return { ...poll, organizerToken };
   }
 
@@ -95,17 +95,21 @@ async function joinPoll(joinCode, input) {
   return { participantId, participantToken };
 }
 
-async function changePollStatus(id, organizerToken, nextStatus) {
+async function changePollStatus(id, organizerToken, nextStatus, organizerId) {
   if (!isPositiveBigintId(id)) return null;
 
   const poll = await pollRepository.findLifecycleById(id);
   if (!poll) return null;
 
   const { organizerTokenHash } = poll;
-  const suppliedHash = hashOrganizerToken(organizerToken);
-  if (organizerTokenHash?.length !== suppliedHash.length ||
-      !timingSafeEqual(organizerTokenHash, suppliedHash)) {
-    throw new OrganizerForbiddenError("Organizer access denied");
+  if (organizerId) {
+    if (poll.organizerId !== organizerId) throw new OrganizerForbiddenError("Organizer access denied");
+  } else {
+    const suppliedHash = hashOrganizerToken(organizerToken);
+    if (organizerTokenHash?.length !== suppliedHash.length ||
+        !timingSafeEqual(organizerTokenHash, suppliedHash)) {
+      throw new OrganizerForbiddenError("Organizer access denied");
+    }
   }
 
   const previousStatus = PREVIOUS_STATUS.get(nextStatus);
@@ -114,11 +118,15 @@ async function changePollStatus(id, organizerToken, nextStatus) {
   if (poll.status !== previousStatus) throw new PollTransitionError(conflictMessage);
 
   const updated = await pollRepository.updatePollStatus({
-    id, previousStatus, nextStatus, organizerTokenHash,
+    id, previousStatus, nextStatus, organizerTokenHash, organizerId,
   });
   if (!updated) throw new PollTransitionError(conflictMessage);
   pollEvents.emit("poll-status-updated", { pollId: updated.id, status: updated.status });
   return updated;
+}
+
+function listOrganizerPolls(organizerId) {
+  return pollRepository.findOwnedPolls(organizerId);
 }
 
 async function castVote(joinCode, participantToken, input) {
@@ -159,7 +167,7 @@ async function getResults(joinCode) {
 }
 
 module.exports = {
-  createPoll, getPollByCode, joinPoll, changePollStatus, castVote, getResults,
+  createPoll, getPollByCode, joinPoll, changePollStatus, castVote, getResults, listOrganizerPolls,
   isJoinCode, pollEvents,
   InvalidPollError, PollNotActiveError, OrganizerForbiddenError, PollTransitionError,
   ParticipantForbiddenError, DuplicateVoteError, ResultsUnavailableError,

@@ -10,10 +10,15 @@ const httpServer = http.createServer(app);
 
 const PORT = process.env.PORT || 3001;
 const pool = require("./src/config/db");
+const { corsOptions } = require("./src/config/auth");
+const authRoutes = require("./src/routes/auth");
+const organizerRoutes = require("./src/routes/organizer");
 const pollRoutes = require("./src/routes/polls");
 const { attachPollSockets } = require("./src/sockets/polls");
 
-app.use(cors({ origin: "http://localhost:5173" }));
+app.use(cors(corsOptions));
+app.use("/api/auth", authRoutes);
+app.use("/api/organizer", organizerRoutes);
 app.use("/api/polls", pollRoutes);
 app.use(express.json());
 
